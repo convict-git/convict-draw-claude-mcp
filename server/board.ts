@@ -22,6 +22,7 @@ export class Board {
   private tab: WebSocket | null = null;
   private pending = new Map<string, Pending>();
   private readonly file: string;
+  private readonly animationsDir: string;
 
   /** What the board looked like the last time Claude read it (null until the first read). */
   lastSeen: Snapshot | null = null;
@@ -29,6 +30,7 @@ export class Board {
   constructor(dataDir: string) {
     fs.mkdirSync(dataDir, { recursive: true });
     this.file = path.join(dataDir, "board.excalidraw");
+    this.animationsDir = path.join(dataDir, "animations");
   }
 
   get isOpen() {
@@ -110,6 +112,15 @@ export class Board {
     const temp = `${this.file}.tmp`;
     fs.writeFileSync(temp, json);
     fs.renameSync(temp, this.file);
+  }
+
+  /** Save an animated SVG and return its path. */
+  saveAnimation(svg: string) {
+    fs.mkdirSync(this.animationsDir, { recursive: true });
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    const file = path.join(this.animationsDir, `animation-${stamp}.svg`);
+    fs.writeFileSync(file, svg);
+    return file;
   }
 
   get filePath() {
