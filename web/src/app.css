@@ -44,3 +44,87 @@ body,
   background: #fff;
   cursor: pointer;
 }
+
+.animate-button {
+  font: 500 14px/1 system-ui, sans-serif;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid var(--default-border-color, #e0e0e0);
+  background: var(--island-bg-color, #fff);
+  color: var(--text-primary-color, #1b1b1f);
+  cursor: pointer;
+}
+
+.animate-button:hover {
+  background: var(--button-hover-bg, #f1f0ff);
+}
+
+.animation-player {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  font: 13px/1.3 system-ui, sans-serif;
+  color: #1b1b1f;
+}
+
+.animation-player.dark {
+  background: #121212;
+  color: #e3e3e8;
+}
+
+.animation-player .stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.animation-player .controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px 16px;
+}
+
+.animation-player .progress {
+  width: min(240px, 30vw);
+  height: 4px;
+  margin-right: 8px;
+  border-radius: 2px;
+  background: rgba(127, 127, 127, 0.25);
+  overflow: hidden;
+}
+
+.animation-player .progress > div {
+  height: 100%;
+  background: #6965db;
+  transform: scaleX(0);
+  transform-origin: left;
+}
+
+.animation-player button {
+  font: inherit;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.animation-player button:hover {
+  background: rgba(127, 127, 127, 0.12);
+}
+.animation-player:focus { outline: none; }
+
+/* Claude's laser pointer joins as a collaborator; there's no real collaboration to show or follow. */
+.layer-ui__wrapper__top-right .UserList__wrapper {
+  display: none;
+}

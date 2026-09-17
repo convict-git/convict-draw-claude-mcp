@@ -26,6 +26,7 @@ export function describeBoard(scene: SceneSnapshot): string {
   const header = [`${snapshot.size} element${snapshot.size === 1 ? "" : "s"}`];
   header.push(`visible area x=${v.x} y=${v.y} ${v.width}×${v.height} at ${Math.round(v.zoom * 100)}% zoom`);
   lines.push(`Board: ${header.join(" · ")}`);
+  if (snapshot.size) lines.push("You drew everything except elements marked [user].");
 
   const selected = scene.selectedIds.filter((id) => snapshot.has(id)).map((id) => name(snapshot.get(id)!, snapshot));
   if (selected.length) lines.push(`User has selected: ${selected.join(", ")}`);
@@ -90,6 +91,7 @@ function describeElement(e: SlimElement & { label?: string }, all: Snapshot): st
     case "frame":
     case "magicframe":
       parts.push(`frame "${e.name ?? "Frame"}" (id ${e.id}) at (${e.x}, ${e.y}) ${e.width}×${e.height}`);
+      if (e.steps) parts.push(`draw_diagram diagram${e.steps.total > 1 ? `, step ${e.steps.shown} of ${e.steps.total} shown` : ""}`);
       break;
     case "arrow":
     case "line": {
@@ -109,12 +111,14 @@ function describeElement(e: SlimElement & { label?: string }, all: Snapshot): st
       break;
     }
     default:
-      parts.push(`${e.type}${e.label ? ` "${e.label}"` : ""} (id ${e.id}) at (${e.x}, ${e.y}) ${e.width}×${e.height}`);
+      // Diagram parts are placed by the layout, so their coordinates and colors are noise.
+      parts.push(`${e.type}${e.label ? ` "${e.label}"` : ""} (id ${e.id})${e.diagram ? "" : ` at (${e.x}, ${e.y}) ${e.width}×${e.height}`}`);
   }
-  const style = [e.backgroundColor && `fill ${e.backgroundColor}`, e.strokeColor && `stroke ${e.strokeColor}`, e.strokeStyle].filter(Boolean);
+  const colors = e.diagram && e.byClaude ? [] : [e.backgroundColor && `fill ${e.backgroundColor}`, e.strokeColor && `stroke ${e.strokeColor}`];
+  const style = [...colors, e.strokeStyle].filter(Boolean);
   if (style.length) parts.push(style.join(", "));
   if (e.link) parts.push(`link ${e.link}`);
-  parts.push(e.byClaude ? "[drawn by Claude]" : "[drawn by user]");
+  if (!e.byClaude) parts.push("[user]");
   return parts.join(" · ");
 }
 

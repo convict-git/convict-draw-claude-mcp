@@ -1,6 +1,8 @@
 import { Excalidraw, hashElementsVersion, serializeAsJSON } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { buildAnimation, showAnimation } from "./animate";
+import { AnimationPlayer } from "./AnimationPlayer";
 import { connectBridge, type BridgeStatus } from "./bridge";
 
 const SAVE_DELAY_MS = 800;
@@ -28,6 +30,18 @@ export function App() {
     fetch("/api/board", { method: "PUT", headers: { "Content-Type": "application/json" }, body, keepalive: true }).catch(() => {});
   };
 
+  const animate = async () => {
+    const api = apiRef.current;
+    if (!api) return;
+    const selected = api.getAppState().selectedElementIds;
+    try {
+      const { animation } = await buildAnimation(api, { ids: Object.keys(selected).filter((id) => selected[id]) });
+      showAnimation(animation);
+    } catch (error) {
+      api.setToast({ message: `Couldn't animate: ${error instanceof Error ? error.message : String(error)}`, duration: 4000 });
+    }
+  };
+
   useEffect(() => {
     const bridge = connectBridge(() => apiRef.current, setStatus);
     bridgeRef.current = bridge;
@@ -50,6 +64,11 @@ export function App() {
       <Excalidraw
         initialData={initialData}
         excalidrawAPI={(api) => (apiRef.current = api)}
+        renderTopRightUI={() => (
+          <button className="animate-button" onClick={animate} title="Play a drawing animation of the selection, or of the whole board">
+            Animate
+          </button>
+        )}
         onChange={(elements) => {
           // onChange fires on every pointer move and scroll; only save when elements actually changed.
           const hash = hashElementsVersion(elements);
@@ -67,6 +86,7 @@ export function App() {
         }}
       />
       <ConnectionBadge status={status} onTakeOver={() => bridgeRef.current?.takeOver()} />
+      <AnimationPlayer />
     </>
   );
 }
