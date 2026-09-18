@@ -201,7 +201,7 @@ Sources the visual language and patterns draw on:
 
 ```bash
 npm run dev:web     # board UI with hot reload on http://localhost:5173 (keep `npm start` running)
-npm run typecheck
+npm run typecheck   # also checks prompt lengths (npm run check:prompts)
 npm run smoke       # exercise the tools against http://localhost:3170
 npx tsx scripts/call-tool.ts get_board '{}'   # call a single tool
 npx tsx scripts/call-tool.ts get_board_image '{}' board.png   # save an image result
@@ -214,7 +214,8 @@ To try changes without touching your real board, run a second server and UI: `PO
 | `server/index.ts` | HTTP server: MCP endpoint, board API, WebSocket, access rules |
 | `server/tools.ts` | The connector's tools |
 | `server/describe.ts` | Board outline and change detection that Claude reads |
-| `server/guide.ts` | Instructions, `read_me` guides, and session playbooks for Claude (element format adapted from [excalidraw/excalidraw-mcp](https://github.com/excalidraw/excalidraw-mcp), MIT) |
+| `server/prompts/*.md` | Instructions, `read_me` guides, and session playbooks for Claude (element format adapted from [excalidraw/excalidraw-mcp](https://github.com/excalidraw/excalidraw-mcp), MIT) |
+| `server/guide.ts` | Loads the prompts and enforces the instructions' length limit |
 | `server/board.ts` | Forwards commands to the open tab; saves the board file |
 | `web/src/commands.ts` | Runs Claude's commands on the live Excalidraw board: drawing, arranging, moving the view |
 | `web/src/diagram.ts` | `draw_diagram`: merges calls, steps, and turns a layout into elements |

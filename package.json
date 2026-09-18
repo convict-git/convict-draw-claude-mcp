@@ -9,7 +9,8 @@
     "build": "vite build",
     "start": "tsx server/index.ts",
     "dev:web": "vite",
-    "typecheck": "tsc -p .",
+    "typecheck": "tsc -p . && tsx scripts/check-prompts.ts",
+    "check:prompts": "tsx scripts/check-prompts.ts",
     "smoke": "tsx scripts/smoke-test.ts",
     "tunnel": "cloudflared tunnel --url http://localhost:3170",
     "share": "tsx scripts/share.ts"
