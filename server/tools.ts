@@ -203,7 +203,10 @@ export function createMcpServer(board: Board, boardUrl: string): McpServer {
           .describe("Show parts up to this step. Default: all. Space is reserved for later steps, so nothing moves as you reveal them."),
         point: z.boolean().optional().describe("Sweep your laser pointer over the parts that just appeared, in order, once they're drawn."),
         animate: z.boolean().optional().describe("New parts draw themselves in, stroke by stroke in explanation order, on the user's screen (default true). false makes them appear at once."),
-        placement: z.enum(["right_of_existing", "below_existing"]).optional().describe("Where a new diagram goes. Default right_of_existing."),
+        placement: z
+          .enum(["free_space", "right_of_existing", "below_existing"])
+          .optional()
+          .describe("Where a new diagram goes. Default free_space: the nearest empty spot next to existing work, keeping the board compact."),
       },
     },
     async ({ show_step, ...rest }) =>
@@ -232,9 +235,9 @@ export function createMcpServer(board: Board, boardUrl: string): McpServer {
       inputSchema: {
         elements: z.array(z.record(z.string(), z.any())).describe("Excalidraw elements and pseudo-elements, in drawing order. See read_me."),
         placement: z
-          .enum(["as_given", "right_of_existing", "below_existing"])
+          .enum(["as_given", "free_space", "right_of_existing", "below_existing"])
           .optional()
-          .describe("as_given (default) uses your coordinates. right_of_existing / below_existing shifts the new elements next to the existing content."),
+          .describe("as_given (default) uses your coordinates: use it for edits and annotations next to specific elements. free_space moves new content, as a unit, to the nearest empty spot next to existing work; use it for every new standalone drawing. right_of_existing / below_existing put it past the edge of everything."),
         point: z.boolean().optional().describe("Sweep your laser pointer over the new elements after drawing them, saving a point_at call."),
         animate: z.boolean().optional().describe("New elements draw themselves in, stroke by stroke, on the user's screen (default true)."),
       },
@@ -259,7 +262,7 @@ export function createMcpServer(board: Board, boardUrl: string): McpServer {
     {
       title: "Draw a Mermaid diagram",
       description:
-        "Converts a Mermaid diagram into editable whiteboard shapes with automatic layout. Flowchart, sequence, class, ER, and state diagrams become editable; other types become a single image. Placed to the right of existing content unless x and y are given.",
+        "Converts a Mermaid diagram into editable whiteboard shapes with automatic layout. Flowchart, sequence, class, ER, and state diagrams become editable; other types become a single image. Placed in the nearest free space next to existing content unless x and y are given.",
       inputSchema: {
         definition: z.string().describe("Mermaid source, e.g. \"flowchart LR\\n  A[Producer] --> B[Topic] --> C[Consumer]\""),
         x: z.number().optional().describe("Left edge of the diagram"),
@@ -386,13 +389,18 @@ export function createMcpServer(board: Board, boardUrl: string): McpServer {
     "clear_board",
     {
       title: "Clear the whiteboard",
-      description: "Removes everything from the whiteboard (the user can undo with Ctrl+Z). Only use when the user asks to start over.",
-      inputSchema: { confirm: z.union([z.boolean(), z.literal("true")]).describe("Must be true") },
+      description:
+        "DESTRUCTIVE: erases everything on the whiteboard, including the user's own work. Call it ONLY when the user has explicitly asked, in this conversation, to clear, wipe, or erase the whole board. Never call it on your own initiative: not to make room, not to start a new topic, not to tidy up, not to redo a drawing. New drawings go in free space next to the existing work (draw_diagram and draw_mermaid do this by default; draw with placement \"free_space\"). To remove or redo your own drawing, delete its ids with draw.",
+      inputSchema: {
+        confirm: z.union([z.boolean(), z.literal("true")]).describe("Must be true"),
+        user_request: z.string().min(1).describe("The user's own words asking to clear the board, quoted from this conversation."),
+      },
       annotations: { destructiveHint: true },
     },
-    async ({ confirm }) =>
+    async ({ confirm, user_request }) =>
       run("clear_board", async () => {
         if (confirm !== true && confirm !== "true") return textResult("Not cleared: pass confirm=true.", true);
+        if (!user_request?.trim()) return textResult("Not cleared: only clear the board when the user explicitly asks; quote their request in user_request.", true);
         const { removed } = await board.call<{ removed: number }>("clear");
         board.markSeen(await board.scene(true));
         return textResult(`Cleared ${removed} elements.`);

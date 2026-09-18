@@ -24,7 +24,7 @@ export function describeBoard(scene: SceneSnapshot): string {
   const lines: string[] = [];
 
   const header = [`${snapshot.size} element${snapshot.size === 1 ? "" : "s"}`];
-  header.push(`visible area x=${v.x} y=${v.y} ${v.width}×${v.height} at ${Math.round(v.zoom * 100)}% zoom`);
+  header.push(`visible area (clear of toolbars) x=${v.x} y=${v.y} ${v.width}×${v.height} at ${Math.round(v.zoom * 100)}% zoom`);
   lines.push(`Board: ${header.join(" · ")}`);
   if (snapshot.size) lines.push("You drew everything except elements marked [user].");
 

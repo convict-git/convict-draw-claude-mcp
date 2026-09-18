@@ -8,6 +8,8 @@ import { layoutDiagram, placeLabels, throughPoint, trimRoute, type Box, type Poi
 import { buildLegend, legendEntries } from "./diagram-legend";
 import { edgeLook, EDGE_FONT, GROUP_FONT, groupLook, INK, lookOf, nodeLook, styleSignature } from "./diagram-style";
 import { textSize } from "./measure";
+import { findFreeSpot, obstaclesOf } from "./placement";
+import { viewportCenter } from "./viewport";
 
 type Api = ExcalidrawImperativeAPI;
 type El = any;
@@ -56,21 +58,26 @@ export async function planDiagram(api: Api, args: DiagramArgs): Promise<DiagramP
   const arrows = spec.layout === "mindmap" ? "curved" : spec.arrows;
   const entries = legendEntries(spec, look);
 
-  // Where the frame goes: where it already is, or next to what's on the board.
+  // A title inside the frame: Excalidraw's own frame name is small and gray.
+  const titleHeight = spec.title ? textSize(spec.title, TITLE_FONT, look.font).height + 20 : 0;
+  const legendAt = (x: number, y: number) => buildLegend(id, entries, x, y + layout.height + LEGEND_GAP, Math.max(layout.width, 520), look);
+  const size = legendAt(0, 0);
+  const width = Math.round(Math.max(layout.width, size.width) + FRAME_PADDING * 2);
+  const height = Math.round(titleHeight + layout.height + (size.height ? size.height + LEGEND_GAP : 0) + FRAME_PADDING * 2);
+
+  // Where the frame goes: where it already is, or in free space next to what's on the board.
   const others = scene.filter((e) => e.id !== id && e.customData?.diagram !== id && !e.containerId);
   let origin: Point = [0, 0];
   if (frame) origin = [frame.x, frame.y];
   else if (others.length) {
     const [minX, minY, maxX, maxY] = bounds(others);
-    origin = args.placement === "below_existing" ? [minX, maxY + 120] : [maxX + 120, minY];
+    if (args.placement === "below_existing") origin = [minX, maxY + 120];
+    else if (args.placement === "right_of_existing") origin = [maxX + 120, minY];
+    else origin = findFreeSpot(width, height, obstaclesOf(others), viewportCenter(api)) ?? [maxX + 120, minY];
   }
-  // A title inside the frame: Excalidraw's own frame name is small and gray.
-  const titleHeight = spec.title ? textSize(spec.title, TITLE_FONT, look.font).height + 20 : 0;
   const ox = origin[0] + FRAME_PADDING;
   const oy = origin[1] + FRAME_PADDING + titleHeight;
-  const legend = buildLegend(id, entries, ox, oy + layout.height + LEGEND_GAP, Math.max(layout.width, 520), look);
-  const width = Math.round(Math.max(layout.width, legend.width) + FRAME_PADDING * 2);
-  const height = Math.round(titleHeight + layout.height + (legend.height ? legend.height + LEGEND_GAP : 0) + FRAME_PADDING * 2);
+  const legend = legendAt(ox, oy);
 
   const existing = new Map(scene.filter((e) => e.customData?.diagram === id && !e.containerId).map((e) => [e.id, e]));
   const mentioned = new Set([...(args.nodes ?? []).map((n) => n.id), ...(args.groups ?? []).map((g) => g.id), ...(args.edges ?? []).map((e) => e.id ?? `${e.from}->${e.to}`)]);
@@ -348,3 +355,4 @@ function bounds(elements: readonly El[]): [number, number, number, number] {
   }
   return [minX, minY, maxX, maxY];
 }
+

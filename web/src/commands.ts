@@ -22,6 +22,7 @@ import type {
   ImageResult,
   MermaidArgs,
   MermaidResult,
+  Placement,
   PointArgs,
   PointResult,
   SceneSnapshot,
@@ -35,6 +36,8 @@ import { drawingIn, prepareDrawIn, stopDrawIn } from "./draw-in";
 import { hideLaser, isPointing, pointAt, type Bounds, type LaserStep } from "./laser";
 import { checkLayout } from "./lint";
 import { textWidth } from "./measure";
+import { findFreeSpot, obstaclesOf } from "./placement";
+import { currentViewport, setZoom, viewportCenter, visibleArea } from "./viewport";
 
 type Api = ExcalidrawImperativeAPI;
 // Excalidraw's element types are branded and readonly; this bridge works with plain objects.
@@ -229,7 +232,7 @@ async function draw(
   rebind(rebinds, created, get, put, warnings);
   let offset: { dx: number; dy: number } | undefined;
   if (placement !== "as_given" && created.length) {
-    offset = placementOffset(created, [...live.values()].filter((e) => !deleteIds.includes(e.id)), placement);
+    offset = placementOffset(api, created, [...live.values()].filter((e) => !deleteIds.includes(e.id)), placement);
     for (const e of created) {
       e.x += offset.dx;
       e.y += offset.dy;
@@ -711,7 +714,7 @@ async function mermaid(api: Api, { definition, x, y }: MermaidArgs): Promise<Mer
     dx = x - minX;
     dy = y - minY;
   } else if (existing.length) {
-    const offset = placementOffset(created, existing, "right_of_existing");
+    const offset = placementOffset(api, created, existing, "free_space");
     dx = offset.dx;
     dy = offset.dy;
   }
@@ -921,8 +924,8 @@ function reveal(api: Api, [minX, minY, maxX, maxY]: Bounds) {
   const margin = 60 / v.zoom;
   const inView = minX - margin >= v.x && minY - margin >= v.y && maxX + margin <= v.x + v.width && maxY + margin <= v.y + v.height;
   if (inView) return v.zoom;
-  const state = api.getAppState();
-  const zoom = Math.min(v.zoom, (state.width * 0.8) / Math.max(maxX - minX, 1), (state.height * 0.8) / Math.max(maxY - minY, 1));
+  const area = visibleArea(api);
+  const zoom = Math.min(v.zoom, (area.width * 0.85) / Math.max(maxX - minX, 1), (area.height * 0.85) / Math.max(maxY - minY, 1));
   return setZoom(api, zoom, [(minX + maxX) / 2, (minY + maxY) / 2]).zoom;
 }
 
@@ -957,41 +960,9 @@ function slim(e: El): SlimElement {
 }
 
 function applyCamera(api: Api, rect: { x: number; y: number; width: number; height: number }) {
-  const state = api.getAppState();
-  const zoom = clamp(Math.min(state.width / rect.width, state.height / rect.height), 0.1, 30);
+  const area = visibleArea(api);
+  const zoom = clamp(Math.min(area.width / rect.width, area.height / rect.height), 0.1, 30);
   return setZoom(api, zoom, [rect.x + rect.width / 2, rect.y + rect.height / 2]);
-}
-
-function setZoom(api: Api, value: number, focus: [number, number]) {
-  const state = api.getAppState();
-  const zoom = clamp(value, 0.1, 30);
-  const scrollX = -focus[0] + state.width / 2 / zoom;
-  const scrollY = -focus[1] + state.height / 2 / zoom;
-  api.updateScene({
-    appState: { zoom: { value: zoom } as never, scrollX, scrollY },
-    captureUpdate: CaptureUpdateAction.NEVER,
-  });
-  return viewportFrom(state.width, state.height, scrollX, scrollY, zoom);
-}
-
-function currentViewport(api: Api) {
-  const s = api.getAppState();
-  return viewportFrom(s.width, s.height, s.scrollX, s.scrollY, s.zoom.value);
-}
-
-function viewportFrom(screenWidth: number, screenHeight: number, scrollX: number, scrollY: number, zoom: number) {
-  return {
-    x: round(-scrollX),
-    y: round(-scrollY),
-    width: round(screenWidth / zoom),
-    height: round(screenHeight / zoom),
-    zoom: Math.round(zoom * 100) / 100,
-  };
-}
-
-function viewportCenter(api: Api): [number, number] {
-  const v = currentViewport(api);
-  return [v.x + v.width / 2, v.y + v.height / 2];
 }
 
 function boundsInViewport(api: Api, [minX, minY, maxX, maxY]: Bounds) {
@@ -1005,17 +976,21 @@ function fitElements(api: Api, elements: readonly El[], maxZoom: number) {
 
 // Camera moves are applied directly: Excalidraw's animated scrolling stalls when the tab isn't rendering.
 function fitBounds(api: Api, [minX, minY, maxX, maxY]: Bounds, maxZoom: number) {
-  const state = api.getAppState();
+  const area = visibleArea(api);
   const width = Math.max(maxX - minX, 1);
   const height = Math.max(maxY - minY, 1);
-  const zoom = clamp(Math.min((state.width * 0.85) / width, (state.height * 0.85) / height), 0.1, maxZoom);
+  const zoom = clamp(Math.min((area.width * 0.9) / width, (area.height * 0.9) / height), 0.1, maxZoom);
   return setZoom(api, zoom, [(minX + maxX) / 2, (minY + maxY) / 2]);
 }
 
-function placementOffset(created: El[], existing: readonly El[], placement: "right_of_existing" | "below_existing") {
+function placementOffset(api: Api, created: El[], existing: readonly El[], placement: Placement) {
   const others = existing.filter((e) => !e.isDeleted);
   if (!others.length) return { dx: 0, dy: 0 };
-  const [minX, minY] = getCommonBounds(created as never);
+  const [minX, minY, maxX, maxY] = getCommonBounds(created as never);
+  if (placement === "free_space") {
+    const spot = findFreeSpot(maxX - minX, maxY - minY, obstaclesOf(others), viewportCenter(api));
+    return spot ? { dx: spot[0] - minX, dy: spot[1] - minY } : { dx: 0, dy: 0 };
+  }
   const [exMinX, exMinY, exMaxX, exMaxY] = getCommonBounds(others as never);
   return placement === "right_of_existing"
     ? { dx: exMaxX + 120 - minX, dy: exMinY - minY }

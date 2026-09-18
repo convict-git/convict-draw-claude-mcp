@@ -31,6 +31,11 @@ Make it visual, and make every style mean something:
 - Add a legend (legend: true, or name the meanings) whenever a diagram uses more than one kind, line style, or status. Give every diagram a title.
 - Keep labels to a few words (arrow labels 1-3 words: the layout leaves arrow showing around each label, so long ones spread the diagram out), and keep a step to about a dozen parts.
 
+Keep all the work together (never clear the board on your own):
+- The board holds the whole conversation's work, and the user refers back to it. clear_board erases everything, the user's own drawings too; call it only when the user explicitly asks to clear, wipe, or erase the board. A new topic, a redo, or a crowded board is not a reason to clear it.
+- Put each new drawing in free space next to what's there, not far away and never on top of it: draw_diagram and draw_mermaid do this by default, and draw does it with placement "free_space". Use your own coordinates only for edits and annotations beside specific elements.
+- To redo or remove one of your drawings, delete its ids, or update it in place.
+
 Reading the board:
 - When the user mentions something they drew or changed, points at "this", or asks whether you can see their changes, call get_board first. Never guess what's on the board. Use get_board_image when they drew freehand or when layout matters.
 - If a drawing result lists warnings (overlaps, crossings, cramped labels), fix them with another call.
@@ -58,7 +63,8 @@ const DRAW = `# Drawing with draw
   - {"type":"distribute","ids":"a,b,c","axis":"horizontal|vertical"} spaces three or more elements evenly
   - {"type":"order","ids":"zone1","to":"back|front"} changes layers: backgrounds to the back, callouts to the front
   - "point": true (next to "elements") sweeps your laser pointer over what you drew
-- placement "right_of_existing" or "below_existing" puts new content next to what's there; your coordinates are then relative to each other.
+- For a new drawing, pass placement "free_space": the elements move together to the nearest empty spot next to the existing work, so nothing overlaps and everything stays close. Your coordinates are then only relative to each other. ("right_of_existing" / "below_existing" put it past the edge of everything instead.) Keep your own coordinates for edits and annotations next to specific elements.
+- Never clear the board to make room; see the instructions on keeping work together.
 - The result warns about overlapping shapes, arrows crossing shapes, and labels that wrap or cover shapes. Fix every warning.
 - draw_mermaid turns Mermaid into editable shapes; use it for sequence, class, ER, and state diagrams.
 - point_at circles shapes, traces arrows, and underlines text; pass several ids to walk through them, together=true to circle a set, or a script to pace it to what you're saying.
@@ -92,7 +98,7 @@ Array order is layer order: backgrounds first, then shapes, then arrows and call
 - A view of about 1200×800 fits comfortably. Use frames or cameraUpdate to show one idea at a time.
 
 ## Example: two connected boxes next to existing content
-{"placement":"right_of_existing","point":true,"elements":[
+{"placement":"free_space","point":true,"elements":[
   {"type":"rectangle","id":"producer","x":0,"y":0,"width":130,"height":56,"roundness":{"type":3},"backgroundColor":"#a5d8ff","label":{"text":"Producer","fontSize":18}},
   {"type":"rectangle","id":"topic","x":250,"y":0,"width":160,"height":56,"roundness":{"type":3},"backgroundColor":"#d0bfff","label":{"text":"Topic: orders","fontSize":18}},
   {"type":"arrow","id":"produce","x":0,"y":0,"start":{"id":"producer"},"end":{"id":"topic"},"label":{"text":"publish","fontSize":16}}

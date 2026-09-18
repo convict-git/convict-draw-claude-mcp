@@ -97,7 +97,7 @@ If voice mode can't call the tools, the same server still works from:
 | `get_board_image` | A PNG of the whole board, your current view, or your selection. |
 | `set_view` | Fit everything, the selection, or given elements (such as a frame); show an area; or set the zoom level. |
 | `read_me` | Guides Claude loads only when needed: `draw` (element format, arrangement, sizing), `styles` (every visual property and what it means), `patterns` (how to picture common explanations), and the session playbooks below. |
-| `clear_board` | Start over. You can undo it. |
+| `clear_board` | Start over. Only used when you explicitly ask; otherwise new drawings go in free space next to the existing work. You can undo it. |
 
 ## Sessions: learn, interview, brainstorm
 

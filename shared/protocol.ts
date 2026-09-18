@@ -47,9 +47,12 @@ export interface SceneSnapshot {
   viewport: { x: number; y: number; width: number; height: number; zoom: number };
 }
 
+/** free_space: the nearest free spot next to existing content that keeps the board compact. */
+export type Placement = "free_space" | "right_of_existing" | "below_existing";
+
 export interface DrawArgs {
   elements: Record<string, unknown>[];
-  placement?: "as_given" | "right_of_existing" | "below_existing";
+  placement?: "as_given" | Placement;
   /** Sweep the laser pointer over the new elements after drawing them. */
   point?: boolean;
   /** Draw new elements in stroke by stroke where they land (default true). */
@@ -143,7 +146,7 @@ export interface DiagramArgs {
   point?: boolean;
   /** Draw what appears stroke by stroke (default true). */
   animate?: boolean;
-  placement?: "right_of_existing" | "below_existing";
+  placement?: Placement;
 }
 
 export interface DiagramResult extends DrawResult {
