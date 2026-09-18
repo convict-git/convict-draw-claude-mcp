@@ -31,7 +31,8 @@ import type {
 } from "../../shared/protocol";
 import { buildAnimation, closeAnimation, serializeAnimation, showAnimation } from "./animate";
 import { diagramSteps, planDiagram } from "./diagram";
-import { hideLaser, pointAt, type Bounds, type LaserStep } from "./laser";
+import { drawingIn, prepareDrawIn, stopDrawIn } from "./draw-in";
+import { hideLaser, isPointing, pointAt, type Bounds, type LaserStep } from "./laser";
 import { checkLayout } from "./lint";
 import { textWidth } from "./measure";
 
@@ -55,14 +56,27 @@ interface DrawOptions {
   focus?: Bounds;
   /** Elements to point at after drawing, in order (default with `point`: the new elements). */
   pointIds?: string[];
+  /** The order to draw new elements in (default: the order they were given). */
+  drawOrder?: string[];
 }
 const LABEL_FIELDS = ["fontSize", "fontFamily", "strokeColor", "textAlign", "verticalAlign", "opacity"];
+/**
+ * Within one reply, Claude's calls come seconds apart. A call after a longer quiet spell starts a new
+ * reply, and pointing still going then was paced to speech that's over or was cut off (the user spoke up).
+ */
+const NEW_REPLY_GAP_MS = 10_000;
+let lastCommandAt = -Infinity;
 /** Pseudo-elements that arrange existing elements instead of drawing one. */
 const ARRANGE_OPS = new Set(["group", "ungroup", "align", "distribute", "order"]);
 
 export async function runCommand(api: Api, command: TabCommand, args: any): Promise<unknown> {
+  const now = performance.now();
+  if (now - lastCommandAt > NEW_REPLY_GAP_MS && isPointing()) hideLaser(api);
+  lastCommandAt = now;
   // Changes to the board or the view should be visible, so they close the animation player.
   if (command !== "scene" && command !== "image" && command !== "animate") closeAnimation();
+  // Anything else that changes the board takes over from a drawing that's still being drawn in.
+  if (command === "draw" || command === "diagram" || command === "mermaid" || command === "clear") stopDrawIn();
   switch (command) {
     case "draw":
       return draw(api, args);
@@ -81,7 +95,8 @@ export async function runCommand(api: Api, command: TabCommand, args: any): Prom
     case "animate":
       return animate(api, args ?? {});
     case "point":
-      return point(api, args ?? {});
+      // Point at things once they've been drawn, not while they're still appearing.
+      return point(api, args ?? {}, { after: drawingIn() });
     default:
       throw new Error(`Unknown command: ${command}`);
   }
@@ -91,7 +106,11 @@ export async function runCommand(api: Api, command: TabCommand, args: any): Prom
 // draw: create, update (by existing id), delete, and move the camera
 // ---------------------------------------------------------------------------
 
-async function draw(api: Api, { elements, placement = "as_given", point: pointNew = false }: DrawArgs, options: DrawOptions = {}): Promise<DrawResult> {
+async function draw(
+  api: Api,
+  { elements, placement = "as_given", point: pointNew = false, animate: drawInNew = true }: DrawArgs,
+  options: DrawOptions = {},
+): Promise<DrawResult> {
   if (!Array.isArray(elements)) throw new Error("`elements` must be an array of element objects");
   await fontsReady();
 
@@ -248,8 +267,19 @@ async function draw(api: Api, { elements, placement = "as_given", point: pointNe
     fitBounds(api, focus, 1);
     cameraMoved = true;
   }
+  // New elements are drawn in where they land, stroke by stroke, while the view settles.
+  const preparing =
+    drawInNew && visibleCreated.length
+      ? prepareDrawIn(api, next, visibleCreated.map((e) => e.id), options.drawOrder ?? []).catch((error) => {
+          console.warn("Couldn't draw in the new elements", error);
+          return undefined;
+        })
+      : Promise.resolve(undefined);
   if (cameraMoved && visibleCreated.length) await sleep(CAMERA_SETTLE_MS);
+  const drawIn = await preparing;
+  drawIn?.mount();
   api.updateScene({ elements: next, captureUpdate: CaptureUpdateAction.IMMEDIATELY });
+  drawIn?.play();
   for (const e of next) if (touched.has(e.id) && e.containerId) touched.add(e.containerId);
   warnings.push(...checkLayout(next, touched));
 
@@ -261,7 +291,7 @@ async function draw(api: Api, { elements, placement = "as_given", point: pointNe
   if (parts.length) api.setToast({ message: `Claude ${parts.join(", ")}`, duration: 2000 });
 
   const pointIds = options.pointIds ?? (pointNew ? visibleCreated.filter((e) => e.type !== "frame").map((e) => e.id) : []);
-  if (pointIds.length) point(api, { ids: pointIds, ms: POINT_NEW_MS });
+  if (pointIds.length) point(api, { ids: pointIds, ms: POINT_NEW_MS }, { after: drawingIn() });
 
   return {
     created: visibleCreated.map((e) => e.id),
@@ -270,6 +300,7 @@ async function draw(api: Api, { elements, placement = "as_given", point: pointNe
     touched: [...touched],
     warnings,
     scene: scene(api, { quiet: true }),
+    ...(drawIn ? { drawInMs: Math.round(drawIn.durationMs) } : {}),
     ...(offset && (offset.dx || offset.dy) ? { offset: { dx: Math.round(offset.dx), dy: Math.round(offset.dy) } } : {}),
   };
 }
@@ -428,8 +459,8 @@ async function diagram(api: Api, args: DiagramArgs): Promise<DiagramResult> {
   const f = plan.frame;
   const result = await draw(
     api,
-    { elements: plan.elements },
-    { focus: [f.x, f.y, f.x + f.width, f.y + f.height], pointIds: args.point ? plan.revealed : [] },
+    { elements: plan.elements, animate: args.animate },
+    { focus: [f.x, f.y, f.x + f.width, f.y + f.height], pointIds: args.point ? plan.revealed : [], drawOrder: plan.drawOrder },
   );
   return {
     ...result,
@@ -799,18 +830,30 @@ async function animate(api: Api, args: AnimateArgs): Promise<AnimateResult> {
 }
 
 const DEFAULT_POINT_MS = 2500;
+/** Voice mode's speaking pace, used to hold the pointer on each part of a script for as long as it's talked about. */
+const SPOKEN_WORDS_PER_SECOND = 2.6;
 
-function point(api: Api, { ids = [], together = false, x, y, ms = DEFAULT_POINT_MS, gesture = "auto", hide = false }: PointArgs): PointResult {
+/** About how long it takes to say `text` aloud, in ms. */
+export function speakingMs(text: string) {
+  const words = text.split(/\s+/).filter(Boolean).length;
+  const pauses = (text.match(/[.,;:!?]/g) ?? []).length;
+  return Math.round(clamp((words / SPOKEN_WORDS_PER_SECOND) * 1000 + pauses * 150 + 250, 900, 20_000));
+}
+
+function point(
+  api: Api,
+  { ids = [], together = false, x, y, ms = DEFAULT_POINT_MS, gesture = "auto", hide = false, script, interrupt = false }: PointArgs,
+  { after }: { after?: { done: Promise<unknown>; remainingMs: number } } = {},
+): PointResult {
   if (hide) {
     hideLaser(api);
-    return { targets: [], durationMs: 0, warnings: [] };
+    return { targets: [], durationMs: 0, startsInMs: 0, warnings: [] };
   }
   const all = api.getSceneElements() as readonly El[];
   const byId = new Map(all.map((e) => [e.id, e]));
   const warnings: string[] = [];
   const steps: LaserStep[] = [];
   const targets: string[] = [];
-  const stepMs = clamp(ms, 300, 20_000);
 
   // A label stands for its shape; a shape's bounds include its label.
   const resolve = (id: string): El | undefined => {
@@ -820,15 +863,16 @@ function point(api: Api, { ids = [], together = false, x, y, ms = DEFAULT_POINT_
   };
   const withLabels = (els: El[]) => all.filter((e) => els.some((el) => e.id === el.id || e.containerId === el.id));
 
-  if (typeof x === "number" && typeof y === "number") {
-    steps.push({ bounds: [x, y, x, y], gesture: gesture === "auto" ? "dot" : gesture, ms: stepMs });
-    targets.push(`(${round(x)}, ${round(y)})`);
-  }
-  const elements = [...new Set(ids.map(resolve).filter(Boolean))] as El[];
-  if (together && elements.length) {
-    steps.push({ bounds: getCommonBounds(withLabels(elements) as never) as Bounds, gesture: gesture === "auto" ? "circle" : gesture, ms: stepMs });
-    targets.push(elements.map((e) => e.id).join(" + "));
-  } else {
+  /** Point at `list` for `total` ms: all at once, or one after another sharing the time. */
+  const add = (list: string[], total: number, together: boolean, gesture: PointArgs["gesture"] = "auto") => {
+    const elements = [...new Set(list.map(resolve).filter(Boolean))] as El[];
+    if (!elements.length) return;
+    if (together) {
+      steps.push({ bounds: getCommonBounds(withLabels(elements) as never) as Bounds, gesture: gesture === "auto" ? "circle" : gesture, ms: total });
+      targets.push(elements.map((e) => e.id).join(" + "));
+      return;
+    }
+    const each = Math.max(300, total / elements.length);
     for (const el of elements) {
       const linear = el.type === "arrow" || el.type === "line";
       const auto = linear ? "trace" : el.type === "text" ? "underline" : "circle";
@@ -836,15 +880,39 @@ function point(api: Api, { ids = [], together = false, x, y, ms = DEFAULT_POINT_
         bounds: getCommonBounds(withLabels([el]) as never) as Bounds,
         gesture: gesture === "auto" ? auto : gesture,
         path: linear ? el.points.map((p: number[]) => [el.x + p[0], el.y + p[1]]) : undefined,
-        ms: stepMs,
+        ms: each,
       });
       targets.push(el.id);
     }
-  }
-  if (!steps.length) throw new Error(warnings.length ? warnings.join("; ") : "Nothing to point at: pass ids, or x and y.");
+  };
 
-  void pointAt(api, steps, (bounds) => reveal(api, bounds));
-  return { targets, durationMs: steps.length * stepMs, warnings };
+  let leadMs = 0;
+  if (script?.length) {
+    // Each beat lasts as long as saying its words takes, so the pointer moves on when the speech does.
+    for (const beat of script) {
+      const beatIds = beat.ids ?? [];
+      const beatMs = beat.say?.trim() ? speakingMs(beat.say) : clamp(beat.ms ?? DEFAULT_POINT_MS, 300, 20_000);
+      if (!beatIds.length) {
+        // Nothing to point at while this is said: leave the pointer where it is, or (before the first
+        // target, like an introduction) wait that long before pointing.
+        if (steps.length) steps[steps.length - 1].ms += beatMs;
+        else leadMs += beatMs;
+        continue;
+      }
+      add(beatIds, beatMs, beat.together ?? false, beat.gesture);
+    }
+  } else {
+    const stepMs = clamp(ms, 300, 20_000);
+    if (typeof x === "number" && typeof y === "number") {
+      steps.push({ bounds: [x, y, x, y], gesture: gesture === "auto" ? "dot" : gesture, ms: stepMs });
+      targets.push(`(${round(x)}, ${round(y)})`);
+    }
+    add(ids, together ? stepMs : stepMs * ids.length, together, gesture);
+  }
+  if (!steps.length) throw new Error(warnings.length ? warnings.join("; ") : "Nothing to point at: pass ids, a script, or x and y.");
+
+  const startsInMs = pointAt(api, steps, (bounds) => reveal(api, bounds), { interrupt, after, leadMs });
+  return { targets, durationMs: Math.round(steps.reduce((sum, s) => sum + s.ms, 0)), startsInMs, warnings };
 }
 
 /** Scroll so the area is on screen, zooming out only if it doesn't fit. Returns the zoom. */

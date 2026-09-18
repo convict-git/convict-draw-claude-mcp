@@ -42,6 +42,8 @@ export interface Layout {
 }
 
 const ARROW_GAP = 4;
+/** How much arrow must show on each side of its label. Excalidraw hides the arrow under the label, so a label longer than its arrow leaves only the text. */
+export const LABEL_CLEARANCE = 24;
 const SPACING = {
   "elk.spacing.nodeNode": "40",
   "elk.layered.spacing.nodeNodeBetweenLayers": "60",
@@ -76,8 +78,20 @@ export async function layoutDiagram(spec: Spec, look: Look): Promise<Layout> {
     if (edge.label?.trim()) texts.set(edge.id, wrapText(edge.label, EDGE_FONT, 150, look.font));
   }
 
-  const placed = tree ? mindmapLayout(spec, sizes, shapes, tree) : await flowLayout(spec, sizes, texts, look);
-  return { ...placed, texts, branches, shapes };
+  if (tree) return { ...mindmapLayout(spec, sizes, shapes, tree, texts, look), texts, branches, shapes };
+
+  // Labels get room from the layout, but an arrow whose label still covers it (a bend next to the label, an
+  // arrow between neighbors in one layer) gets more space and another try.
+  const extra = { along: 0, across: 0 };
+  let layout!: Layout;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    layout = { ...(await flowLayout(spec, sizes, texts, look, extra)), texts, branches, shapes };
+    const short = labelShortfall(spec, layout, look);
+    if (!short.along && !short.across) break;
+    extra.along = Math.min(extra.along + short.along, 400);
+    extra.across = Math.min(extra.across + short.across, 400);
+  }
+  return layout;
 }
 
 // ---------------------------------------------------------------------------
@@ -92,7 +106,19 @@ function elk() {
   return elkInstance;
 }
 
-async function flowLayout(spec: Spec, sizes: Map<string, { width: number; height: number }>, texts: Map<string, string>, look: Look) {
+async function flowLayout(
+  spec: Spec,
+  sizes: Map<string, { width: number; height: number }>,
+  texts: Map<string, string>,
+  look: Look,
+  extra: { along: number; across: number },
+) {
+  const spacing: Record<string, string> = {
+    ...SPACING,
+    "elk.spacing.nodeNode": String(40 + extra.across),
+    "elk.layered.spacing.nodeNodeBetweenLayers": String(60 + extra.along),
+    "elk.layered.spacing.edgeNodeBetweenLayers": String(32 + extra.along / 2),
+  };
   const elkNodes = new Map<string, El>();
   for (const node of spec.nodes) elkNodes.set(node.id, { id: node.id, ...sizes.get(node.id) });
   for (const group of spec.groups) {
@@ -105,7 +131,7 @@ async function flowLayout(spec: Spec, sizes: Map<string, { width: number; height
         "elk.nodeSize.constraints": "MINIMUM_SIZE",
         "elk.nodeSize.minimum": `(${Math.ceil(title.width + 40)},40)`,
         // ELK doesn't pass spacing down to a group's contents.
-        ...SPACING,
+        ...spacing,
       },
     });
   }
@@ -123,7 +149,7 @@ async function flowLayout(spec: Spec, sizes: Map<string, { width: number; height
       "elk.json.shapeCoords": "ROOT",
       // Claude lists things in the order it explains them; keep that order where the layout allows.
       "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
-      ...SPACING,
+      ...spacing,
       "elk.padding": "[top=0,left=0,bottom=0,right=0]",
     },
   };
@@ -137,7 +163,10 @@ async function flowLayout(spec: Spec, sizes: Map<string, { width: number; height
     const text = texts.get(edge.id);
     if (text) {
       const size = textSize(text, EDGE_FONT, look.font);
-      elkEdge.labels = [{ id: `${edge.id}:label`, text, width: Math.ceil(size.width + 16), height: Math.ceil(size.height + 8) }];
+      // Reserve arrow on both sides of the label along the flow, so the arrow still shows around it.
+      const clearance = 2 * (LABEL_CLEARANCE + ARROW_GAP);
+      const down = spec.direction === "down";
+      elkEdge.labels = [{ id: `${edge.id}:label`, text, width: Math.ceil(size.width + 16 + (down ? 0 : clearance)), height: Math.ceil(size.height + 8 + (down ? clearance : 0)) }];
     }
     root.edges.push(elkEdge);
   }
@@ -311,9 +340,26 @@ function mindmapTree(spec: Spec): Tree {
   return { root, children, treeEdges, branches };
 }
 
-function mindmapLayout(spec: Spec, sizes: Map<string, { width: number; height: number }>, shapes: Map<string, Shape>, tree: Tree) {
+function mindmapLayout(
+  spec: Spec,
+  sizes: Map<string, { width: number; height: number }>,
+  shapes: Map<string, Shape>,
+  tree: Tree,
+  texts: Map<string, string>,
+  look: Look,
+) {
   const siblingGap = (depth: number) => (depth === 0 ? 36 : depth === 1 ? 20 : 10);
-  const branchGap = (depth: number) => (depth === 0 ? 100 : 60);
+  // A labeled branch needs to be long enough to show around its label.
+  const labelWidth = (a: string, b: string) => {
+    const edge = spec.edges.find((e) => tree.treeEdges.has(e.id) && ((e.from === a && e.to === b) || (e.from === b && e.to === a)));
+    const text = edge && texts.get(edge.id);
+    return text ? textSize(text, EDGE_FONT, look.font).width : 0;
+  };
+  const branchGap = (parent: string, list: string[]) => {
+    const base = depthOf(parent) === 0 ? 100 : 60;
+    const widest = Math.max(0, ...list.map((k) => labelWidth(parent, k)));
+    return widest ? Math.max(base, Math.ceil(widest + 2 * (LABEL_CLEARANCE + ARROW_GAP) + 8)) : base;
+  };
   const depthOf = (id: string) => tree.branches.get(id)?.depth ?? 0;
   const kids = (id: string) => tree.children.get(id) ?? [];
 
@@ -349,12 +395,13 @@ function mindmapLayout(spec: Spec, sizes: Map<string, { width: number; height: n
   const place = (parent: string, list: string[], side: 1 | -1) => {
     const p = boxes.get(parent)!;
     const gap = siblingGap(depthOf(parent));
+    const reach = branchGap(parent, list);
     const total = list.reduce((sum, k) => sum + heightOf(k), 0) + gap * Math.max(0, list.length - 1);
     let cursor = p.y + p.height / 2 - total / 2;
     for (const k of list) {
       const size = sizes.get(k)!;
       const h = heightOf(k);
-      const x = side > 0 ? p.x + p.width + branchGap(depthOf(parent)) : p.x - branchGap(depthOf(parent)) - size.width;
+      const x = side > 0 ? p.x + p.width + reach : p.x - reach - size.width;
       boxes.set(k, { x, y: cursor + h / 2 - size.height / 2, ...size });
       place(k, kids(k), side);
       cursor += h + gap;
@@ -505,14 +552,86 @@ export function placeLabels(spec: Spec, layout: Layout, look: Look, arrows: Spec
     const free = (r: Rect) => !boxes.some((b) => overlaps(r, b)) && !placed.some((p) => overlaps(r, p)) && !onBorder(r);
     const clear = (r: Rect) => !otherLines.some((points) => points.slice(1).some((q, i) => segmentCrossesRect(points[i], q, r)));
 
+    const shows = (c: Point) => arrowShows(line, rectAt(c));
     const candidates = [0.5, 0.4, 0.6, 0.3, 0.7, 0.2, 0.8, 0.12, 0.88].map((t) => pointAlong(line, t));
+    // The middle of the longest straight run is the likeliest spot to leave the arrow visible.
+    candidates.push(segmentMiddle(line, longestSegment(line)));
     const labelAt = layout.routes.get(edge.id)?.labelAt;
     if (labelAt) candidates.unshift(closestOnPath(line, labelAt));
-    const anchor = candidates.find((c) => free(rectAt(c)) && clear(rectAt(c))) ?? candidates.find((c) => free(rectAt(c))) ?? candidates[0];
+    const anchor =
+      candidates.find((c) => free(rectAt(c)) && clear(rectAt(c)) && shows(c)) ??
+      candidates.find((c) => free(rectAt(c)) && shows(c)) ??
+      candidates.find((c) => free(rectAt(c)) && clear(rectAt(c))) ??
+      candidates.find((c) => free(rectAt(c))) ??
+      candidates[0];
     anchors.set(edge.id, anchor);
     placed.push(rectAt(anchor));
   }
   return anchors;
+}
+
+/**
+ * How much more room the flow needs so every arrow shows around its label: extra length along the flow
+ * (between layers) and across it (between neighbors in a layer).
+ */
+function labelShortfall(spec: Spec, layout: Layout, look: Look): { along: number; across: number } {
+  const anchors = placeLabels(spec, layout, look, spec.arrows);
+  const short = { along: 0, across: 0 };
+  for (const edge of spec.edges) {
+    const text = layout.texts.get(edge.id);
+    const route = layout.routes.get(edge.id);
+    const anchor = anchors.get(edge.id);
+    if (!text || !route || !anchor) continue;
+    const line = trimRoute(route.points, spec.arrows);
+    const size = textSize(text, EDGE_FONT, look.font);
+    const rect: Rect = [anchor[0] - size.width / 2, anchor[1] - size.height / 2, anchor[0] + size.width / 2, anchor[1] + size.height / 2];
+    if (arrowShows(line, rect)) continue;
+    const i = longestSegment(line);
+    const [dx, dy] = [line[i + 1][0] - line[i][0], line[i + 1][1] - line[i][1]];
+    const length = Math.hypot(dx, dy) || 1;
+    const covered = (Math.abs(dx) * size.width + Math.abs(dy) * size.height) / length;
+    const missing = Math.ceil(covered + 2 * LABEL_CLEARANCE + 8 - length);
+    if (missing <= 0) continue;
+    const horizontal = Math.abs(dx) >= Math.abs(dy);
+    const alongFlow = horizontal === (spec.direction !== "down");
+    if (alongFlow) short.along = Math.max(short.along, missing);
+    else short.across = Math.max(short.across, missing);
+  }
+  return short;
+}
+
+/** Whether enough of the arrow shows before and after its label (Excalidraw cuts the arrow out around the label). */
+export function arrowShows(points: Point[], [minX, minY, maxX, maxY]: Rect, clearance = LABEL_CLEARANCE): boolean {
+  const cut: Rect = [minX - 4, minY - 4, maxX + 4, maxY + 4];
+  let travelled = 0;
+  let firstIn = -1;
+  let lastIn = -1;
+  for (let i = 0; i < points.length - 1; i++) {
+    const length = segmentLength(points, i);
+    const steps = Math.max(1, Math.ceil(length / 2));
+    for (let s = 0; s <= steps; s++) {
+      const x = points[i][0] + ((points[i + 1][0] - points[i][0]) * s) / steps;
+      const y = points[i][1] + ((points[i + 1][1] - points[i][1]) * s) / steps;
+      if (x > cut[0] && x < cut[2] && y > cut[1] && y < cut[3]) {
+        const at = travelled + (length * s) / steps;
+        if (firstIn < 0) firstIn = at;
+        lastIn = at;
+      }
+    }
+    travelled += length;
+  }
+  if (firstIn < 0) return true;
+  return firstIn >= clearance && travelled - lastIn >= clearance;
+}
+
+function longestSegment(points: Point[]): number {
+  let longest = 0;
+  for (let i = 1; i < points.length - 1; i++) if (segmentLength(points, i) > segmentLength(points, longest)) longest = i;
+  return longest;
+}
+
+function segmentMiddle(points: Point[], i: number): Point {
+  return [(points[i][0] + points[i + 1][0]) / 2, (points[i][1] + points[i + 1][1]) / 2];
 }
 
 /** Insert `anchor` into the path, in the middle of the point list, since that's where Excalidraw puts an arrow's label. */

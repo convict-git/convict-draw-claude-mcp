@@ -26,46 +26,108 @@ const LIFT_MS = 120;
 
 let run = 0;
 let position: Point | null = null;
+/** The pointing that's playing or waiting, so a new call can line up behind it. */
+let queue: Promise<void> = Promise.resolve();
+/** When the queued pointing is expected to finish (performance.now() time). */
+let busyUntil = 0;
 
 /**
- * Points at each step in turn, gliding between them. A new call interrupts the current one.
- * `reveal` scrolls a step into view before it starts and returns the zoom level it left.
+ * Points at each step in turn, gliding between them. `reveal` scrolls a step into view before it starts
+ * and returns the zoom level it left.
+ *
+ * Claude writes faster than voice mode speaks, so pointing calls arrive ahead of the words they go with.
+ * By default a call waits for the pointing already in progress (and for anything being drawn in) instead of
+ * cutting it off, which keeps the pointer closer to the speech. `interrupt` starts right away instead.
+ * Returns how long until this call's pointing starts, in ms.
  */
-export async function pointAt(api: Api, steps: LaserStep[], reveal: (bounds: Bounds) => number) {
-  const token = ++run;
+export function pointAt(api: Api, steps: LaserStep[], reveal: (bounds: Bounds) => number, {
+    interrupt = false,
+    after,
+    leadMs = 0,
+  }: {
+    interrupt?: boolean;
+    /** Something to wait for first, like a drawing that's still drawing in. */
+    after?: { done: Promise<unknown>; remainingMs: number };
+    /** A pause before pointing (words said before the first target), counted from when the pointing ahead ends. */
+    leadMs?: number;
+  } = {},
+): number {
+  if (interrupt) {
+    run++;
+    queue = Promise.resolve();
+    busyUntil = 0;
+  }
+  const token = run;
+  const now = performance.now();
+  const waitMs = Math.max(Math.max(0, busyUntil - now) + leadMs, after?.remainingMs ?? 0);
+  busyUntil = now + waitMs + steps.reduce((sum, s) => sum + s.ms, 0);
+  const previous = queue;
+  queue = (async () => {
+    await previous;
+    const lead = new Promise((resolve) => setTimeout(resolve, leadMs));
+    await after?.done;
+    await lead;
+    if (token !== run) return;
+    await play(api, steps, reveal, token);
+  })();
+  return Math.round(waitMs);
+}
+
+async function play(api: Api, steps: LaserStep[], reveal: (bounds: Bounds) => number, token: number) {
   const alive = () => token === run;
+  plays++;
 
   for (const step of steps) {
     const zoom = reveal(step.bounds);
     const { at, loopMs, lift } = gesturePath(step, zoom);
     const start = at(0);
 
+    let glideMs = 0;
     if (position) {
       // Glide over with the laser off, so the trail only marks what's being pointed at.
       const from = position;
       const distance = Math.hypot(start[0] - from[0], start[1] - from[1]) * zoom;
-      const ms = clamp(distance * 0.7, LIFT_MS * 2, 650);
-      const ok = await tween(ms, (t) => show(api, lerp(from, start, easeInOut(t)), "up"), alive);
+      glideMs = clamp(distance * 0.7, LIFT_MS * 2, 650);
+      const ok = await tween(glideMs, (t) => show(api, lerp(from, start, easeInOut(t)), "up"), alive);
       if (!ok) return;
     }
 
-    const loops = Math.max(1, Math.round(step.ms / loopMs));
+    // Fit whole gestures into the step's time (the glide included), so a script keeps pace with speech.
+    const available = Math.max(loopMs * 0.6, step.ms - glideMs);
+    const loops = Math.max(1, Math.round(available / loopMs));
+    const eachMs = available / loops - (lift && loops > 1 ? LIFT_MS : 0);
     for (let i = 0; i < loops; i++) {
       if (lift && i > 0) {
         show(api, position!, "up");
         if (!(await tween(LIFT_MS, () => {}, alive))) return;
       }
-      if (!(await tween(loopMs, (t) => show(api, at(t), "down"), alive))) return;
+      if (!(await tween(eachMs, (t) => show(api, at(t), "down"), alive))) return;
     }
   }
 
+  // Linger, unless the next queued pointing picks up from here.
   show(api, position!, "up");
-  if (!(await tween(LINGER_MS, () => {}, alive))) return;
-  hideLaser(api);
+  const done = ++plays;
+  setTimeout(() => {
+    if (alive() && done === plays) clear(api);
+  }, LINGER_MS);
+}
+
+let plays = 0;
+
+/** Whether pointing is playing or waiting to play. */
+export function isPointing() {
+  return busyUntil > performance.now();
 }
 
 export function hideLaser(api: Api) {
   run++;
+  queue = Promise.resolve();
+  busyUntil = 0;
+  clear(api);
+}
+
+function clear(api: Api) {
   position = null;
   api.updateScene({ collaborators: new Map(), captureUpdate: CaptureUpdateAction.NEVER });
 }

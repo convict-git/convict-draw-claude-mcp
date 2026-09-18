@@ -64,7 +64,7 @@ To check the tunnel and connector from your computer:
 npm run smoke -- https://<tunnel-address>/mcp/<secret>
 ```
 
-This runs every drawing tool once (shapes, arrangement, the laser pointer, an animation, a flow diagram revealed in two steps, and a mind map), then removes what it drew. Set `SMOKE_KEEP=1` to leave it on the board.
+This checks the session prompts, runs every drawing tool once (shapes, arrangement, the laser pointer, an animation, a flow diagram revealed in two steps, and a mind map), then removes what it drew. Set `SMOKE_KEEP=1` to leave it on the board.
 
 ### Check that voice mode can use it
 
@@ -91,13 +91,25 @@ If voice mode can't call the tools, the same server still works from:
 | `draw_diagram` | Nodes, edges, and groups in; a laid-out diagram out. **flow** layout (ELK) for systems, processes, and concept maps, with elbow, curved, or straight arrows routed around boxes; **mindmap** layout with a central topic and colored, curved branches. A hand-drawn or clean look, styles, statuses, and an automatic legend. Parts can appear step by step (`show_step`), and later calls with the same id add, change, or remove parts. |
 | `draw` | Individual elements with every Excalidraw property: create (new id), update (existing id, only the fields given), delete, and move your view. Also groups, aligns, spaces out, and reorders layers (`group`, `align`, `distribute`, `order`). Arrows can connect to any shape, including ones you drew. |
 | `draw_mermaid` | Mermaid → editable shapes with automatic layout (flowchart, sequence, class, ER, state). Other diagram types come in as a single image. |
-| `point_at` | Claude's laser pointer: circles shapes, traces arrows in their direction, and underlines text as Claude talks about them, scrolling your view if needed. |
-| `animate` | Plays a hand-drawing animation of the board, a frame, or chosen elements, in the order Claude picks (a diagram replays in its step order). Can save it as an animated SVG in `.data/animations/`. |
+| `point_at` | Claude's laser pointer: circles shapes, traces arrows in their direction, and underlines text as Claude talks about them, scrolling your view if needed. A script paces the pointer to what Claude is saying. |
+| `animate` | Replays a hand-drawing animation of the board, a frame, or chosen elements in a full-screen player, in the order Claude picks (a diagram replays in its step order). Can save it as an animated SVG in `.data/animations/`. New drawings don't need it: they draw themselves in on the board. |
 | `get_board` | The live board as text: every element with its id and label, which ones you drew, what you've selected, and **your changes since Claude last looked**. |
 | `get_board_image` | A PNG of the whole board, your current view, or your selection. |
 | `set_view` | Fit everything, the selection, or given elements (such as a frame); show an area; or set the zoom level. |
-| `read_me` | Guides Claude loads only when needed: `draw` (element format, arrangement, sizing), `styles` (every visual property and what it means), `patterns` (how to picture common explanations). |
+| `read_me` | Guides Claude loads only when needed: `draw` (element format, arrangement, sizing), `styles` (every visual property and what it means), `patterns` (how to picture common explanations), and the session playbooks below. |
 | `clear_board` | Start over. You can undo it. |
+
+## Sessions: learn, interview, brainstorm
+
+The board is meant to be a companion you think with, not only something Claude draws on. Three playbooks tell Claude how to behave in each kind of session:
+
+| Playbook | Claude acts as | How it goes |
+|---|---|---|
+| `learn-on-board` | A tutor | Finds out what you already know, draws a roadmap, explains one step at a time, and checks your understanding by having you predict or draw. Corrections go on the board next to your work. Ends with a recap and a study-notes mind map. |
+| `interview-on-board` | An interviewer | Sets the problem and hands you the board. You design; Claude asks about your boxes and arrows, phase by phase, without giving away answers. Then a debrief: strengths and gaps marked on your diagram, an overall read, and what to practice. |
+| `brainstorm-on-board` | A thinking partner | Frames the question, gets your ideas out first, and adds a few of its own in pink. Then groups them, helps you compare and choose, and turns the choice into next steps. |
+
+Just say what you want ("Let's learn Kafka", "Give me a system design interview", "Help me brainstorm launch ideas"). Claude loads the matching playbook through `read_me`. To start one on purpose, use the connector's prompts: `/learn-on-board`, `/interview-on-board`, and `/brainstorm-on-board` in Claude Code, or the connector's prompt menu in the Claude app. Each takes an optional topic.
 
 ## Visual language
 
@@ -143,9 +155,15 @@ Every diagram uses the same vocabulary, so you learn to read it once. Claude add
 
 While Claude explains something on the board, it points at each part as it mentions it. An orange cursor labeled **Claude** moves to the shape and circles it with a laser trail. Arrows are traced in their direction and text is underlined. It helps most in voice mode, where you can't see which box Claude means. The pointer fades a few seconds after Claude stops pointing.
 
+Claude writes faster than voice mode speaks, so a pointing call can arrive before the words it goes with. To keep them in step, Claude sends one `point_at` call before a passage, with a script: each beat names what to point at and the words Claude will say, and lasts as long as saying those words takes (about 2.6 words a second, `SPOKEN_WORDS_PER_SECOND` in `web/src/commands.ts`). A new pointing call waits for the one in progress, and for anything still drawing in, instead of cutting it off.
+
+The board can't hear voice mode, so it can't tell when you interrupt Claude. Instead, a tool call that arrives after more than 10 seconds of quiet counts as the start of a new reply, and pointing left over from the last one is dropped. Claude is also told to put the pointer away first when you interrupt it. Your own clicks and typing never stop the pointer, so Claude can keep pointing while you work on the board (in a mock interview, say).
+
 ## Animations
 
-The board can replay itself as a hand-drawn animation, using [excalidraw-animate](https://github.com/dai-shi/excalidraw-animate) (MIT).
+Everything Claude draws is drawn in where it lands, stroke by stroke, in the order Claude explains it: a diagram's title, then each part with its arrows, then the legend. Revealing a diagram in steps animates it one step at a time. The drawing takes about 4.5 seconds, and clicking or typing on the board skips to the end. It's off when your system asks for reduced motion, and Claude can pass `animate: false` to skip it.
+
+The board can also replay itself as a hand-drawn animation, using [excalidraw-animate](https://github.com/dai-shi/excalidraw-animate) (MIT).
 
 - **You:** click **Animate** at the top right. It animates your selection, or the whole board if nothing is selected.
 - **Claude:** ask for it, e.g. "Animate the Kafka frame, producer first, then the topic." Claude picks the order and speed, and can show a pencil following the strokes.
@@ -162,7 +180,7 @@ The board can replay itself as a hand-drawn animation, using [excalidraw-animate
 
 ## Why a connector and not a skill
 
-Everything Claude needs lives in the connector: its instructions, tool descriptions, and `read_me` guides. They reach every Claude client that uses the connector, including voice mode, which doesn't document support for skills. A skill would also only help with prose, and the hard parts here are geometry: layout, arrow routing, label placement, and checking the result. Those are in code.
+Everything Claude needs lives in the connector: its instructions, tool descriptions, `read_me` guides, and session playbooks. They reach every Claude client that uses the connector, including voice mode, which doesn't document support for skills, and there's nothing extra to install. The playbooks work like skills: the connector's instructions name them in one line, and Claude loads the full text only when a session calls for it. The hard parts of drawing (layout, arrow routing, label placement, and checking the result) are in code.
 
 Sources the visual language and patterns draw on:
 - [Tony Buzan's mind mapping rules](https://mindmapsunleashed.com/how-to-mind-map-with-tony-buzan): a central topic, a color per branch, curved branches, one keyword per branch, thicker branches near the center.
@@ -194,7 +212,7 @@ To try changes without touching your real board, run a second server and UI: `PO
 | `server/index.ts` | HTTP server: MCP endpoint, board API, WebSocket, access rules |
 | `server/tools.ts` | The connector's tools |
 | `server/describe.ts` | Board outline and change detection that Claude reads |
-| `server/guide.ts` | Instructions and `read_me` guides for Claude (element format adapted from [excalidraw/excalidraw-mcp](https://github.com/excalidraw/excalidraw-mcp), MIT) |
+| `server/guide.ts` | Instructions, `read_me` guides, and session playbooks for Claude (element format adapted from [excalidraw/excalidraw-mcp](https://github.com/excalidraw/excalidraw-mcp), MIT) |
 | `server/board.ts` | Forwards commands to the open tab; saves the board file |
 | `web/src/commands.ts` | Runs Claude's commands on the live Excalidraw board: drawing, arranging, moving the view |
 | `web/src/diagram.ts` | `draw_diagram`: merges calls, steps, and turns a layout into elements |
@@ -204,5 +222,6 @@ To try changes without touching your real board, run a second server and UI: `PO
 | `web/src/measure.ts` | Text measurement for sizing shapes to their labels |
 | `web/src/laser.ts` | Claude's laser pointer, shown as a remote collaborator |
 | `web/src/animate.ts`, `AnimationPlayer.tsx` | Builds animations with excalidraw-animate and plays them |
+| `web/src/draw-in.ts` | Draws new elements in place, with an animation laid exactly over the canvas |
 | `web/src/App.tsx`, `bridge.ts` | The board page and its connection to the server |
 | `shared/protocol.ts` | Message types shared by server and page |

@@ -19,6 +19,12 @@ const call = async (name: string, args: Record<string, unknown> = {}) => {
 
 const { tools } = await client.listTools();
 console.log("tools:", tools.map((t) => t.name).join(", "));
+const { prompts } = await client.listPrompts();
+console.log("prompts:", prompts.map((p) => p.name).join(", "));
+const learn = await client.getPrompt({ name: "learn-on-board", arguments: { topic: "Kafka" } });
+const learnText = learn.messages.map((m) => (m.content.type === "text" ? m.content.text : "")).join("");
+if (!learnText.includes("# Playbook: learn-on-board") || !learnText.includes("Topic: Kafka")) throw new Error("learn-on-board prompt is missing its playbook or topic");
+console.log(`learn-on-board prompt: ${learnText.length} chars`);
 
 await call("get_board");
 await call("draw", {
@@ -44,8 +50,10 @@ await call("draw", {
 });
 await call("get_board");
 await call("point_at", { ids: ["smoke_producer", "smoke_publish", "smoke_topic"], ms: 1000 });
+await call("point_at", { script: [{ ids: ["smoke_producer"], say: "The producer writes events." }, { ids: ["smoke_publish", "smoke_topic"], say: "It publishes them to a topic." }] });
 await call("animate", { ids: ["f_smoke"], order: ["smoke_producer", "smoke_publish", "smoke_topic"], pointer: true });
 await call("read_me", { topic: "styles" });
+await call("read_me", { topic: "interview-on-board" });
 await call("draw_diagram", {
   id: "smoke_flow",
   title: "Smoke test flow",

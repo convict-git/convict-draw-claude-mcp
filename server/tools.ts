@@ -15,7 +15,7 @@ import type {
 } from "../shared/protocol.js";
 import { Board, BoardNotOpenError, log } from "./board.js";
 import { describeBoard, describeChanges } from "./describe.js";
-import { GUIDE_TOPICS, GUIDES, SERVER_INSTRUCTIONS } from "./guide.js";
+import { GUIDE_TOPICS, GUIDES, PLAYBOOK_INFO, PLAYBOOKS, SERVER_INSTRUCTIONS } from "./guide.js";
 
 // Style vocabulary shared by the draw_diagram schema.
 const COLOR = z.enum(["blue", "green", "yellow", "orange", "red", "purple", "teal", "pink", "gray"]);
@@ -59,12 +59,28 @@ export function createMcpServer(board: Board, boardUrl: string): McpServer {
     {
       title: "Whiteboard guide",
       description:
-        "Returns a guide. Topic draw (default): the element format, arrangement operations, and sizing rules for the draw tool; read it once before your first draw call. styles: every visual property (colors, fills, strokes, opacity, arrowheads, fonts, frames, layers) and what to use it for. patterns: how to picture common explanations (mind maps, concept maps, timelines, comparisons, matrices, stacks, before/after). draw_diagram, point_at, and animate need no guide.",
+        "Returns a guide. Topic draw (default): the element format, arrangement operations, and sizing rules for the draw tool; read it once before your first draw call. styles: every visual property (colors, fills, strokes, opacity, arrowheads, fonts, frames, layers) and what to use it for. patterns: how to picture common explanations (mind maps, concept maps, timelines, comparisons, matrices, stacks, before/after). draw_diagram, point_at, and animate need no guide. Session playbooks, read at the start of a session and followed throughout: learn-on-board (tutoring a topic), interview-on-board (mock interviews where the user draws), brainstorm-on-board (generating, grouping, and choosing ideas).",
       inputSchema: { topic: z.enum(GUIDE_TOPICS).optional() },
       annotations: { readOnlyHint: true },
     },
     async ({ topic }) => textResult(`${GUIDES[topic ?? "draw"]}\n(read_me topics: ${GUIDE_TOPICS.join(", ")}. You don't need to read a topic twice in a conversation.)`),
   );
+
+  // The same playbooks as prompts, so a user can start a session on purpose (e.g. /learn-on-board in Claude Code).
+  for (const name of PLAYBOOKS) {
+    const info = PLAYBOOK_INFO[name];
+    server.registerPrompt(name, { title: info.title, description: info.description, argsSchema: { topic: z.string().optional().describe(info.argument) } }, ({ topic }) => ({
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `Let's start a whiteboard session. Follow this playbook for the rest of the conversation.\n\n${GUIDES[name]}\n${topic ? `Topic: ${topic}` : "Ask me what I'd like to work on."}`,
+          },
+        },
+      ],
+    }));
+  }
 
   server.registerTool(
     "get_board",
@@ -185,7 +201,8 @@ export function createMcpServer(board: Board, boardUrl: string): McpServer {
           .union([z.number().int().min(1), z.literal("all")])
           .optional()
           .describe("Show parts up to this step. Default: all. Space is reserved for later steps, so nothing moves as you reveal them."),
-        point: z.boolean().optional().describe("Sweep your laser pointer over the parts that just appeared, in order."),
+        point: z.boolean().optional().describe("Sweep your laser pointer over the parts that just appeared, in order, once they're drawn."),
+        animate: z.boolean().optional().describe("New parts draw themselves in, stroke by stroke in explanation order, on the user's screen (default true). false makes them appear at once."),
         placement: z.enum(["right_of_existing", "below_existing"]).optional().describe("Where a new diagram goes. Default right_of_existing."),
       },
     },
@@ -196,7 +213,8 @@ export function createMcpServer(board: Board, boardUrl: string): McpServer {
         const { steps, frame: f } = result;
         const lines = [
           `Diagram "${args.id}": ${result.nodeCount} nodes, ${result.edgeCount} edges, frame at (${f.x}, ${f.y}) ${f.width}×${f.height}.` +
-            (steps.total > 1 ? ` Showing step ${steps.shown} of ${steps.total}.` : ""),
+            (steps.total > 1 ? ` Showing step ${steps.shown} of ${steps.total}.` : "") +
+            drawingInNote(result.drawInMs),
           ...result.warnings.map((w) => `Warning: ${w}`),
         ];
         const stretch = Math.max(f.width / f.height, f.height / f.width);
@@ -218,13 +236,14 @@ export function createMcpServer(board: Board, boardUrl: string): McpServer {
           .optional()
           .describe("as_given (default) uses your coordinates. right_of_existing / below_existing shifts the new elements next to the existing content."),
         point: z.boolean().optional().describe("Sweep your laser pointer over the new elements after drawing them, saving a point_at call."),
+        animate: z.boolean().optional().describe("New elements draw themselves in, stroke by stroke, on the user's screen (default true)."),
       },
     },
-    async ({ elements, placement, point }) =>
+    async ({ elements, placement, point, animate }) =>
       run("draw", async () => {
-        const result = await board.call<DrawResult>("draw", { elements, placement, point });
+        const result = await board.call<DrawResult>("draw", { elements, placement, point, animate });
         const lines = [
-          result.created.length && `Created: ${result.created.join(", ")}`,
+          result.created.length && `Created: ${result.created.join(", ")}.${drawingInNote(result.drawInMs)}`,
           result.updated.length && `Updated: ${result.updated.join(", ")}`,
           result.deleted.length && `Deleted: ${result.deleted.join(", ")}`,
           result.offset && `Placement moved the new elements by (${result.offset.dx}, ${result.offset.dy}); add that to coordinates you use for them later.`,
@@ -287,7 +306,7 @@ export function createMcpServer(board: Board, boardUrl: string): McpServer {
     {
       title: "Animate the whiteboard",
       description:
-        "Plays a hand-drawing animation on the user's screen: shapes, arrows, and text are drawn stroke by stroke in the order you choose. Use it to walk through a diagram step by step, or to replay how part of the board was built. The player covers the board until the user closes it or you draw or move the view again.",
+        "Replays a hand-drawing animation in a full-screen player: shapes, arrows, and text are drawn stroke by stroke in the order you choose. New drawings already draw themselves in on the board, so use this to replay something already there: a recap of a whole diagram in its step order, a custom story order, or saving the animation as a file. The player covers the board until the user closes it or you draw or move the view again.",
       inputSchema: {
         ids: z.array(z.string()).optional().describe("Animate only these elements; a frame id includes everything inside it. Default: the whole board."),
         order: z
@@ -320,8 +339,21 @@ export function createMcpServer(board: Board, boardUrl: string): McpServer {
     {
       title: "Point with a laser",
       description:
-        "Points at part of the whiteboard with Claude's laser pointer so the user can follow what you're talking about: it circles shapes, traces arrows along their direction, and underlines text, scrolling the view if needed. Call it right as you mention something, especially in voice conversations. Returns immediately; the pointer keeps moving while you talk. Several ids are pointed at one after another.",
+        "Points at part of the whiteboard with Claude's laser pointer so the user can follow what you're talking about: it circles shapes, traces arrows along their direction, and underlines text, scrolling the view if needed. Returns immediately; the pointer keeps moving while you talk.\n" +
+        "To stay in step with speech (voice mode speaks more slowly than you write), pass a script once, right before a passage: one beat per sentence or clause, each with the ids it's about and the exact words you'll then say. Each beat lasts as long as saying its words takes. Then say those words, in that order, without further point_at calls in between. A call waits for pointing and drawing already under way, unless interrupt is true.",
       inputSchema: {
+        script: z
+          .array(
+            z.object({
+              ids: z.array(z.string()).optional().describe("What this beat is about. Several ids are pointed at one after another within the beat. None: the pointer stays where it is, or before the first target (an introduction) waits while you say it."),
+              say: z.string().optional().describe("The words you'll speak during this beat, verbatim."),
+              ms: z.number().int().min(300).max(20_000).optional().describe("Length of the beat when there's no say."),
+              together: z.boolean().optional().describe("Circle this beat's ids as one area."),
+              gesture: z.enum(["auto", "circle", "underline", "trace", "dot"]).optional(),
+            }),
+          )
+          .optional()
+          .describe("A passage, beat by beat, paced to your speech. Use instead of ids when you'll talk about several things in a row."),
         ids: z.array(z.string()).optional().describe("Elements to point at, in order. A frame id points at the whole frame."),
         together: z.boolean().optional().describe("Circle all ids at once as one area instead of one after another."),
         x: z.number().optional().describe("Point at a spot on the board instead (board coordinates, with y)."),
@@ -331,7 +363,8 @@ export function createMcpServer(board: Board, boardUrl: string): McpServer {
           .enum(["auto", "circle", "underline", "trace", "dot"])
           .optional()
           .describe("auto (default): trace arrows and lines, underline text, circle everything else."),
-        hide: z.boolean().optional().describe("Remove the pointer from the board now."),
+        hide: z.boolean().optional().describe("Stop pointing and remove the pointer now, including anything queued. Do this first when the user interrupts you and you won't point again right away."),
+        interrupt: z.boolean().optional().describe("Start now, dropping the pointing already under way. Use it on your first point_at after the user interrupts you or changes the subject."),
       },
       annotations: { readOnlyHint: true },
     },
@@ -339,7 +372,10 @@ export function createMcpServer(board: Board, boardUrl: string): McpServer {
       run("point_at", async () => {
         const result = await board.call<PointResult>("point", args as PointArgs);
         const lines = [
-          args.hide ? "Hid the laser pointer." : `Pointing at ${result.targets.join(", then ")} (about ${Math.round(result.durationMs / 100) / 10}s).`,
+          args.hide
+            ? "Hid the laser pointer."
+            : `Pointing at ${result.targets.join(", then ")} for about ${seconds(result.durationMs)}` +
+              (result.startsInMs > 300 ? `, starting in about ${seconds(result.startsInMs)} after what's already under way.` : "."),
           ...result.warnings.map((w) => `Warning: ${w}`),
         ];
         return textResult(lines.join("\n"));
@@ -364,6 +400,14 @@ export function createMcpServer(board: Board, boardUrl: string): McpServer {
   );
 
   return server;
+}
+
+function seconds(ms: number) {
+  return `${Math.round(ms / 100) / 10}s`;
+}
+
+function drawingInNote(ms: number | undefined) {
+  return ms ? ` The new parts are drawing themselves in on the user's screen over about ${seconds(ms)}.` : "";
 }
 
 function textResult(text: string, isError = false): CallToolResult {
