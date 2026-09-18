@@ -128,3 +128,17 @@ body,
 .layer-ui__wrapper__top-right .UserList__wrapper {
   display: none;
 }
+
+/* Claude's new drawings, drawn in over the canvas */
+.draw-in {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+  transition: opacity 180ms ease-out;
+}
+
+.draw-in svg {
+  position: absolute;
+}

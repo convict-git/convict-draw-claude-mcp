@@ -7,15 +7,27 @@ export const SERVER_INSTRUCTIONS = `This connector controls a live Excalidraw wh
 Draw first, then talk:
 - Whenever an answer has structure (parts that connect, a flow, steps, layers, a lifecycle, a hierarchy, a comparison, a set of related ideas), draw it. Make the drawing call before your first sentence of explanation, and don't describe in words a picture you could draw.
 - draw_diagram does the layout for you: layout "flow" for systems, processes, and concept maps; layout "mindmap" for brainstorming, overviews, and study notes. It needs no read_me.
-- Build up while you explain: give parts step numbers and reveal them with show_step, with point: true so your laser pointer sweeps over what just appeared. When you talk about something already on the board, call point_at on it. Use animate to replay a diagram being drawn.
+- Build up while you explain: give parts step numbers and reveal them with show_step, one step per stretch of explanation. New parts draw themselves in on the board, stroke by stroke in the order you explain them, so revealing in steps is how you animate a diagram; you don't need the animate tool for that. Use animate only to replay something already on the board (a recap from the start, or when the user asks).
 - For anything else (timelines, matrices, comparisons, annotations, free sketches), use draw, and call read_me first. read_me topic "styles" covers every visual property and what it should mean; topic "patterns" has layouts for common explanations.
+
+Talking through the board (this matters most in voice mode):
+- You write much faster than voice mode speaks, so a tool call runs well before the words around it are heard. Never rely on where a point_at call sits between sentences.
+- Instead, for each passage (about 2-6 sentences), make one point_at call with a script before you speak it: one beat per sentence or clause, with the ids it's about and the exact words you'll say. Then say exactly those words, in that order. Each beat lasts as long as its words take to say, so the pointer moves on when you do.
+- Order within a turn: the drawing call, then the point_at script, then speech. The pointer waits for new parts to finish drawing in (a few seconds), so open with a sentence about the whole picture as a beat with no ids.
+- A later point_at call lines up after the pointing still under way, which matches speech that hasn't been heard yet.
+- When the user interrupts you (speaks while you're mid-explanation) or changes the subject, your pointer is still following the speech they cut off. Make your first tool call in the reply point_at with hide: true, or with interrupt: true and a new script if you're going to point. Do this even if the reply is only a quick answer.
+- Beats about an arrow trace it in its direction; point at the arrow when you describe what flows along it.
+- Example turn, explaining a diagram just drawn with show_step 1:
+  point_at {"script":[{"say":"Here's what happens when you open a web page."},{"ids":["browser"],"say":"It starts in your browser."},{"ids":["browser->dns","dns"],"say":"The browser asks DNS for the site's address."},{"ids":["dns"],"say":"DNS answers with an IP address."}]}
+  Then say those four sentences. Next turn: draw_diagram show_step 2, and a new script for what appeared.
+- point: true on a drawing call is only a quick sweep over what just appeared, for when you won't talk each part through.
 
 Make it visual, and make every style mean something:
 - The node kind sets shape and color by role. Status marks change: highlight, new, planned (dashed, hatched), deprecated (faded), risk (red).
 - Line style is the kind of connection: solid = direct call or main flow, dashed = async, event, or response, dotted = optional or indirect. Arrowheads can carry relationships too (triangle = is a, diamond = owns, crowfoot = many).
 - Groups are boundaries; give a group a color to make it a tinted zone. Use size for importance and color for categories, not decoration.
 - Add a legend (legend: true, or name the meanings) whenever a diagram uses more than one kind, line style, or status. Give every diagram a title.
-- Keep labels to a few words, and keep a step to about a dozen parts.
+- Keep labels to a few words (arrow labels 1-3 words: the layout leaves arrow showing around each label, so long ones spread the diagram out), and keep a step to about a dozen parts.
 
 Reading the board:
 - When the user mentions something they drew or changed, points at "this", or asks whether you can see their changes, call get_board first. Never guess what's on the board. Use get_board_image when they drew freehand or when layout matters.
@@ -45,8 +57,8 @@ const DRAW = `# Drawing with draw
 - placement "right_of_existing" or "below_existing" puts new content next to what's there; your coordinates are then relative to each other.
 - The result warns about overlapping shapes, arrows crossing shapes, and labels that wrap or cover shapes. Fix every warning.
 - draw_mermaid turns Mermaid into editable shapes; use it for sequence, class, ER, and state diagrams.
-- point_at circles shapes, traces arrows, and underlines text; pass several ids to walk through them, or together=true to circle a set.
-- animate replays drawing on the user's screen: a draw_diagram frame plays in step order; order (ids) sets a custom story; rest "show" keeps everything else visible.
+- point_at circles shapes, traces arrows, and underlines text; pass several ids to walk through them, together=true to circle a set, or a script to pace it to what you're saying.
+- New elements draw themselves in on the board (animate: false to skip that). The animate tool replays drawing in a full-screen player: a draw_diagram frame plays in step order; order (ids) sets a custom story; rest "show" keeps everything else visible.
 - Give elements short, meaningful ids ("producer", "topic_orders") so you can update them later.
 
 ## Element types
@@ -70,7 +82,7 @@ Array order is layer order: backgrounds first, then shapes, then arrows and call
 ## Sizing, spacing, alignment
 - Fonts: 36 hero title, 28 frame title, 20 section heading, 18 shape labels, 16 arrow labels and body, 14 small annotations.
 - Size shapes to their label: about label width + 32 wide and 48-56 tall. Oversized boxes leave arrows too short for their labels.
-- The gap between connected shapes must fit the arrow's label: at least the label's width (about characters × 8 at size 16) + 40px, never under 60px. Arrow labels wider than about 170px wrap.
+- The gap between connected shapes must fit the arrow's label with arrow showing on both sides: at least the label's width (about characters × 8 at size 16) + 60px, never under 60px. Excalidraw hides the arrow under its label, so a shorter gap leaves only the text. Arrow labels wider than about 170px wrap. If shapes can't move apart, use an elbow or curved arrow with a longer run, or shorten the label.
 - Snap to a 20px grid, line up related shapes on a shared edge or center, and keep equal gaps between siblings (align and distribute do this).
 - Leave 40px+ around groups and 80px+ between separate ideas; whitespace separates ideas better than lines do.
 - A view of about 1200×800 fits comfortably. Use frames or cameraUpdate to show one idea at a time.
@@ -155,7 +167,7 @@ Pick the shape of the picture from the shape of the idea. Every picture gets a t
 - Data model: kinds "store", edges with head "crowfoot_many" and tail "crowfoot_one", labels naming the relation.
 - Cycle or feedback loop: layout "flow", arrows "curved", with the last edge back to the first node.
 - Swimlanes (who does what): one colored group per actor, direction "right", steps in order.
-- Step-by-step story: step numbers on parts, show_step 1, 2, 3 with point: true while you explain each step; animate at the end to replay it.
+- Step-by-step story: step numbers on parts, then show_step 1, 2, 3; each step draws itself in, and a point_at script walks through it while you explain. animate at the end replays the whole story if the user wants a recap.
 
 ## Built with draw
 - Timeline: a long horizontal line (strokeWidth 2), small filled ellipses (16×16) as events, labels alternating above and below, dates in gray 14px, eras as tinted zones behind (opacity 40).

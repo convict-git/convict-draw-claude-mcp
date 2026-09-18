@@ -52,6 +52,8 @@ export interface DrawArgs {
   placement?: "as_given" | "right_of_existing" | "below_existing";
   /** Sweep the laser pointer over the new elements after drawing them. */
   point?: boolean;
+  /** Draw new elements in stroke by stroke where they land (default true). */
+  animate?: boolean;
 }
 
 /** Results of commands that change the board carry the scene afterwards, which saves a round trip. */
@@ -69,6 +71,8 @@ export interface DrawResult extends ChangeResult {
   warnings: string[];
   /** How far `placement` moved the new elements from the coordinates given. */
   offset?: { dx: number; dy: number };
+  /** How long the new elements take to draw in on the user's screen. */
+  drawInMs?: number;
 }
 
 export type NodeKind =
@@ -137,6 +141,8 @@ export interface DiagramArgs {
   /** Show parts up to this step; "all" shows everything. */
   showStep?: number | "all";
   point?: boolean;
+  /** Draw what appears stroke by stroke (default true). */
+  animate?: boolean;
   placement?: "right_of_existing" | "below_existing";
 }
 
@@ -202,11 +208,27 @@ export interface PointArgs {
   gesture?: "auto" | "circle" | "underline" | "trace" | "dot";
   /** Remove Claude's pointer from the board now. */
   hide?: boolean;
+  /** A passage of speech, beat by beat: each beat points at its ids for as long as saying `say` takes. */
+  script?: PointBeat[];
+  /** Start now, dropping pointing still in progress or waiting, instead of lining up behind it. */
+  interrupt?: boolean;
+}
+
+export interface PointBeat {
+  ids?: string[];
+  /** The words spoken during this beat; they set how long it lasts. */
+  say?: string;
+  /** How long the beat lasts, when there's no `say`. */
+  ms?: number;
+  together?: boolean;
+  gesture?: "auto" | "circle" | "underline" | "trace" | "dot";
 }
 
 export interface PointResult {
   targets: string[];
   durationMs: number;
+  /** How long until this pointing starts, behind pointing and drawing already under way. */
+  startsInMs: number;
   warnings: string[];
 }
 

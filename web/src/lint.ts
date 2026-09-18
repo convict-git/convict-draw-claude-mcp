@@ -2,6 +2,8 @@
 // shapes they don't connect, and arrow labels that are cramped or wrapped, so Claude can fix them in
 // its next call instead of leaving a tangled diagram.
 
+import { arrowShows } from "./diagram-layout";
+
 type El = any;
 type Rect = [number, number, number, number];
 type Point = [number, number];
@@ -51,6 +53,9 @@ export function checkLayout(elements: readonly El[], touched: Set<string>): stri
     const length = Math.round(pathLength(path));
     if (wrappedLines > lines) {
       issues.push(`label "${oneLine(text)}" on ${arrowName(arrow)} wraps onto ${wrappedLines} lines (arrow is ${length}px long)`);
+    }
+    if (!arrowShows(path, rect(label), 10)) {
+      issues.push(`label "${oneLine(text)}" on ${arrowName(arrow)} hides the arrow: the label is about ${Math.round(label.width)}px wide and the arrow ${length}px long. Move the shapes about ${Math.max(40, Math.round(label.width + 60 - length))}px further apart, route the arrow with a longer straight run, or shorten the label`);
     }
     const lr = inset(rect(label), 2);
     const covered = boxes.filter((b) => !ends.every((p) => inside(p, rect(b))) && intersects(lr, rect(b)));

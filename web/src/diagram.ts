@@ -18,6 +18,8 @@ export interface DiagramPlan {
   frame: { x: number; y: number; width: number; height: number };
   /** Ids that become visible with this call, in the order they're explained. */
   revealed: string[];
+  /** The order to draw new elements in: the title, then the parts as they're explained, then the legend. */
+  drawOrder: string[];
   nodeCount: number;
   edgeCount: number;
   steps: { shown: number; total: number };
@@ -188,7 +190,8 @@ export async function planDiagram(api: Api, args: DiagramArgs): Promise<DiagramP
   const order = new Map(explanationOrder(spec, steps).map((key, i) => [key, i]));
   const parts = revealed.filter((key) => order.has(key)).sort((a, b) => order.get(a)! - order.get(b)!);
 
-  return { elements, frame: { x: origin[0], y: origin[1], width, height }, revealed: parts, nodeCount: spec.nodes.length, edgeCount: spec.edges.length, steps: { shown, total }, warnings };
+  const drawOrder = [`${id}__title`, ...parts];
+  return { elements, frame: { x: origin[0], y: origin[1], width, height }, revealed: parts, drawOrder, nodeCount: spec.nodes.length, edgeCount: spec.edges.length, steps: { shown, total }, warnings };
 }
 
 /** Ids of a diagram's parts in the order they're revealed, for animating it step by step. */

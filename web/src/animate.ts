@@ -1,6 +1,6 @@
 // Turns the live board (or part of it) into a self-playing SVG with excalidraw-animate, and holds
 // the animation the player overlay is showing.
-import { exportToSvg } from "@excalidraw/excalidraw";
+import { exportToSvg, getCommonBounds } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 // The package entry also pulls in its file-saving helpers, whose dependency isn't installed with it.
 import { animateSvg } from "excalidraw-animate/dist/animate.js";
@@ -19,7 +19,19 @@ export interface Animation {
   startMs: number;
   width: number;
   height: number;
+  /** Where the SVG's top left corner is on the board, and how much of the board it covers. */
+  scene: { x: number; y: number; width: number; height: number };
   dark: boolean;
+}
+
+export interface BuildOptions {
+  /** Build from these elements instead of the board's, e.g. a change that hasn't been applied yet. */
+  elements?: readonly El[];
+  padding?: number;
+  /** Embed the fonts, so the SVG renders outside this page. */
+  inlineFonts?: boolean;
+  /** Draw frame names (the board shows its own, at a fixed screen size). */
+  frameNames?: boolean;
 }
 
 // A pencil whose tip sits at (0, 0), where excalidraw-animate anchors the pointer image.
@@ -31,13 +43,13 @@ const PENCIL = `data:image/svg+xml,${encodeURIComponent(
 
 let nextId = 0;
 
-export async function buildAnimation(api: Api, args: AnimateArgs) {
+export async function buildAnimation(api: Api, args: AnimateArgs, { elements: source, padding = 30, inlineFonts = true, frameNames = true }: BuildOptions = {}) {
   const { ids, rest = "animate", elementMs, pointer = false } = args;
   const warnings: string[] = [];
   const files = api.getFiles();
-  const all = (api.getSceneElements() as readonly El[]).filter(
+  const all = (source ?? (api.getSceneElements() as readonly El[])).filter(
     // Images whose file hasn't loaded can't be exported.
-    (e) => e.type !== "image" || (e.fileId && files[e.fileId]),
+    (e) => !e.isDeleted && (e.type !== "image" || (e.fileId && files[e.fileId])),
   );
   const byId = new Map(all.map((e) => [e.id, e]));
   // A draw_diagram diagram plays in its step order unless told otherwise.
@@ -76,14 +88,14 @@ export async function buildAnimation(api: Api, args: AnimateArgs) {
   const state = api.getAppState();
   const dark = state.theme === "dark";
   // Clipping wraps shapes inside frames in an extra group, which excalidraw-animate can't patch.
-  const frameRendering = { ...state.frameRendering, clip: false };
-  const exportSvg = (list: El[], inlineFonts = true) =>
+  const frameRendering = { ...state.frameRendering, clip: false, ...(frameNames ? {} : { name: false }) };
+  const exportSvg = (list: El[], fonts = inlineFonts) =>
     exportToSvg({
       elements: list as never,
-      appState: { ...state, frameRendering, exportBackground: true, exportWithDarkMode: dark },
+      appState: { ...state, frameRendering, exportBackground: true, exportWithDarkMode: dark, exportScale: 1 },
       files,
-      exportPadding: 30,
-      ...(inlineFonts ? {} : { skipInliningFonts: true as const }),
+      exportPadding: padding,
+      ...(fonts ? {} : { skipInliningFonts: true as const }),
     });
 
   // Embeds don't animate, and links would wrap shapes in <a> tags that excalidraw-animate skips over.
@@ -123,8 +135,12 @@ export async function buildAnimation(api: Api, args: AnimateArgs) {
     ...(pointer ? { pointerImg: PENCIL, pointerWidth: "28", pointerHeight: "28" } : {}),
   });
 
+  // Excalidraw exports from the corner of what it draws (labels aside), less the padding.
+  const [minX, minY] = getCommonBounds(renderable.filter((e) => !e.containerId) as never);
+  const [, , viewWidth, viewHeight] = (svg.getAttribute("viewBox") ?? "0 0 0 0").split(" ").map(Number);
   const animation: Animation = {
     id: nextId++,
+    scene: { x: minX - padding, y: minY - padding, width: viewWidth, height: viewHeight },
     svg,
     finishedMs,
     startMs: shownCount ? shownCount + 1 : 0,

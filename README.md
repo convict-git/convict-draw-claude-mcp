@@ -91,8 +91,8 @@ If voice mode can't call the tools, the same server still works from:
 | `draw_diagram` | Nodes, edges, and groups in; a laid-out diagram out. **flow** layout (ELK) for systems, processes, and concept maps, with elbow, curved, or straight arrows routed around boxes; **mindmap** layout with a central topic and colored, curved branches. A hand-drawn or clean look, styles, statuses, and an automatic legend. Parts can appear step by step (`show_step`), and later calls with the same id add, change, or remove parts. |
 | `draw` | Individual elements with every Excalidraw property: create (new id), update (existing id, only the fields given), delete, and move your view. Also groups, aligns, spaces out, and reorders layers (`group`, `align`, `distribute`, `order`). Arrows can connect to any shape, including ones you drew. |
 | `draw_mermaid` | Mermaid → editable shapes with automatic layout (flowchart, sequence, class, ER, state). Other diagram types come in as a single image. |
-| `point_at` | Claude's laser pointer: circles shapes, traces arrows in their direction, and underlines text as Claude talks about them, scrolling your view if needed. |
-| `animate` | Plays a hand-drawing animation of the board, a frame, or chosen elements, in the order Claude picks (a diagram replays in its step order). Can save it as an animated SVG in `.data/animations/`. |
+| `point_at` | Claude's laser pointer: circles shapes, traces arrows in their direction, and underlines text as Claude talks about them, scrolling your view if needed. A script paces the pointer to what Claude is saying. |
+| `animate` | Replays a hand-drawing animation of the board, a frame, or chosen elements in a full-screen player, in the order Claude picks (a diagram replays in its step order). Can save it as an animated SVG in `.data/animations/`. New drawings don't need it: they draw themselves in on the board. |
 | `get_board` | The live board as text: every element with its id and label, which ones you drew, what you've selected, and **your changes since Claude last looked**. |
 | `get_board_image` | A PNG of the whole board, your current view, or your selection. |
 | `set_view` | Fit everything, the selection, or given elements (such as a frame); show an area; or set the zoom level. |
@@ -143,9 +143,15 @@ Every diagram uses the same vocabulary, so you learn to read it once. Claude add
 
 While Claude explains something on the board, it points at each part as it mentions it. An orange cursor labeled **Claude** moves to the shape and circles it with a laser trail. Arrows are traced in their direction and text is underlined. It helps most in voice mode, where you can't see which box Claude means. The pointer fades a few seconds after Claude stops pointing.
 
+Claude writes faster than voice mode speaks, so a pointing call can arrive before the words it goes with. To keep them in step, Claude sends one `point_at` call before a passage, with a script: each beat names what to point at and the words Claude will say, and lasts as long as saying those words takes (about 2.6 words a second, `SPOKEN_WORDS_PER_SECOND` in `web/src/commands.ts`). A new pointing call waits for the one in progress, and for anything still drawing in, instead of cutting it off.
+
+The board can't hear voice mode, so it can't tell when you interrupt Claude. Instead, a tool call that arrives after more than 10 seconds of quiet counts as the start of a new reply, and pointing left over from the last one is dropped. Claude is also told to put the pointer away first when you interrupt it. Your own clicks and typing never stop the pointer, so Claude can keep pointing while you work on the board (in a mock interview, say).
+
 ## Animations
 
-The board can replay itself as a hand-drawn animation, using [excalidraw-animate](https://github.com/dai-shi/excalidraw-animate) (MIT).
+Everything Claude draws is drawn in where it lands, stroke by stroke, in the order Claude explains it: a diagram's title, then each part with its arrows, then the legend. Revealing a diagram in steps animates it one step at a time. The drawing takes about 4.5 seconds, and clicking or typing on the board skips to the end. It's off when your system asks for reduced motion, and Claude can pass `animate: false` to skip it.
+
+The board can also replay itself as a hand-drawn animation, using [excalidraw-animate](https://github.com/dai-shi/excalidraw-animate) (MIT).
 
 - **You:** click **Animate** at the top right. It animates your selection, or the whole board if nothing is selected.
 - **Claude:** ask for it, e.g. "Animate the Kafka frame, producer first, then the topic." Claude picks the order and speed, and can show a pencil following the strokes.
@@ -204,5 +210,6 @@ To try changes without touching your real board, run a second server and UI: `PO
 | `web/src/measure.ts` | Text measurement for sizing shapes to their labels |
 | `web/src/laser.ts` | Claude's laser pointer, shown as a remote collaborator |
 | `web/src/animate.ts`, `AnimationPlayer.tsx` | Builds animations with excalidraw-animate and plays them |
+| `web/src/draw-in.ts` | Draws new elements in place, with an animation laid exactly over the canvas |
 | `web/src/App.tsx`, `bridge.ts` | The board page and its connection to the server |
 | `shared/protocol.ts` | Message types shared by server and page |

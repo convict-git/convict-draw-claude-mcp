@@ -44,6 +44,7 @@ await call("draw", {
 });
 await call("get_board");
 await call("point_at", { ids: ["smoke_producer", "smoke_publish", "smoke_topic"], ms: 1000 });
+await call("point_at", { script: [{ ids: ["smoke_producer"], say: "The producer writes events." }, { ids: ["smoke_publish", "smoke_topic"], say: "It publishes them to a topic." }] });
 await call("animate", { ids: ["f_smoke"], order: ["smoke_producer", "smoke_publish", "smoke_topic"], pointer: true });
 await call("read_me", { topic: "styles" });
 await call("draw_diagram", {
