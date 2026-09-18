@@ -309,7 +309,7 @@ export function createMcpServer(board: Board, boardUrl: string): McpServer {
     {
       title: "Animate the whiteboard",
       description:
-        "Replays a hand-drawing animation in a full-screen player: shapes, arrows, and text are drawn stroke by stroke in the order you choose. New drawings already draw themselves in on the board, so use this to replay something already there: a recap of a whole diagram in its step order, a custom story order, or saving the animation as a file. The player covers the board until the user closes it or you draw or move the view again.",
+        "Replays a hand-drawing animation in a full-screen player: shapes, arrows, and text are drawn stroke by stroke in the order you choose. Use it to replay your first drawing of a conversation once you've walked through it, for a recap of a whole diagram in its step order, a custom story order, or saving the animation as a file. (New drawings also draw themselves in on the board as they appear.) The player covers the board until the user closes it or you draw or move the view again.",
       inputSchema: {
         ids: z.array(z.string()).optional().describe("Animate only these elements; a frame id includes everything inside it. Default: the whole board."),
         order: z
@@ -343,7 +343,11 @@ export function createMcpServer(board: Board, boardUrl: string): McpServer {
       title: "Point with a laser",
       description:
         "Points at part of the whiteboard with Claude's laser pointer so the user can follow what you're talking about: it circles shapes, traces arrows along their direction, and underlines text, scrolling the view if needed. Returns immediately; the pointer keeps moving while you talk.\n" +
-        "To stay in step with speech (voice mode speaks more slowly than you write), pass a script once, right before a passage: one beat per sentence or clause, each with the ids it's about and the exact words you'll then say. Each beat lasts as long as saying its words takes. Then say those words, in that order, without further point_at calls in between. A call waits for pointing and drawing already under way, unless interrupt is true.",
+        "Use it whenever you talk about what's on the board, and after every drawing call you explain.\n" +
+        "To stay in step with speech (voice mode speaks more slowly than you write, so a call runs well before the words around it are heard), pass a script once, right before a passage of about 2-6 sentences: one beat per sentence or clause, each with the ids it's about and the exact words you'll then say. Each beat lasts as long as saying its words takes. Then say those words, in that order, without further point_at calls in between.\n" +
+        "Order within a turn: the drawing call, then the point_at script, then speech. The pointer waits for new parts to finish drawing in, so open with a beat about the whole picture with no ids. A later call lines up after pointing and drawing already under way, unless interrupt is true. Point at an arrow when you describe what flows along it; it's traced in its direction.\n" +
+        "When the user interrupts or changes the subject, the pointer is still following the speech they cut off: make your first call in the reply hide: true, or interrupt: true with a new script, even for a quick answer.\n" +
+        "Example: {\"script\":[{\"say\":\"Here's what happens when you open a web page.\"},{\"ids\":[\"browser\"],\"say\":\"It starts in your browser.\"},{\"ids\":[\"browser->dns\",\"dns\"],\"say\":\"The browser asks DNS for the address.\"}]}",
       inputSchema: {
         script: z
           .array(
