@@ -45,6 +45,8 @@ brew install cloudflared
 
    Copy the `https://….trycloudflare.com` address it prints.
 
+   Shortcut for steps 1 and 3: `npm run share` starts the server and the tunnel together and copies the full connector URL to your clipboard. Ctrl+C stops both.
+
 4. **Add the connector in Claude** (first time, or whenever the tunnel address changes): Settings → Connectors → **Add custom connector**.
    - URL: `https://<tunnel-address>/mcp/<secret>`
    - Leave the OAuth fields empty.

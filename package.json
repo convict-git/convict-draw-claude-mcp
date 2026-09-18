@@ -11,7 +11,8 @@
     "dev:web": "vite",
     "typecheck": "tsc -p .",
     "smoke": "tsx scripts/smoke-test.ts",
-    "tunnel": "cloudflared tunnel --url http://localhost:3170"
+    "tunnel": "cloudflared tunnel --url http://localhost:3170",
+    "share": "tsx scripts/share.ts"
   },
   "dependencies": {
     "@excalidraw/excalidraw": "^0.18.1",
