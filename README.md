@@ -64,7 +64,7 @@ To check the tunnel and connector from your computer:
 npm run smoke -- https://<tunnel-address>/mcp/<secret>
 ```
 
-This runs every drawing tool once (shapes, arrangement, the laser pointer, an animation, a flow diagram revealed in two steps, and a mind map), then removes what it drew. Set `SMOKE_KEEP=1` to leave it on the board.
+This checks the session prompts, runs every drawing tool once (shapes, arrangement, the laser pointer, an animation, a flow diagram revealed in two steps, and a mind map), then removes what it drew. Set `SMOKE_KEEP=1` to leave it on the board.
 
 ### Check that voice mode can use it
 
@@ -96,8 +96,20 @@ If voice mode can't call the tools, the same server still works from:
 | `get_board` | The live board as text: every element with its id and label, which ones you drew, what you've selected, and **your changes since Claude last looked**. |
 | `get_board_image` | A PNG of the whole board, your current view, or your selection. |
 | `set_view` | Fit everything, the selection, or given elements (such as a frame); show an area; or set the zoom level. |
-| `read_me` | Guides Claude loads only when needed: `draw` (element format, arrangement, sizing), `styles` (every visual property and what it means), `patterns` (how to picture common explanations). |
+| `read_me` | Guides Claude loads only when needed: `draw` (element format, arrangement, sizing), `styles` (every visual property and what it means), `patterns` (how to picture common explanations), and the session playbooks below. |
 | `clear_board` | Start over. You can undo it. |
+
+## Sessions: learn, interview, brainstorm
+
+The board is meant to be a companion you think with, not only something Claude draws on. Three playbooks tell Claude how to behave in each kind of session:
+
+| Playbook | Claude acts as | How it goes |
+|---|---|---|
+| `learn-on-board` | A tutor | Finds out what you already know, draws a roadmap, explains one step at a time, and checks your understanding by having you predict or draw. Corrections go on the board next to your work. Ends with a recap and a study-notes mind map. |
+| `interview-on-board` | An interviewer | Sets the problem and hands you the board. You design; Claude asks about your boxes and arrows, phase by phase, without giving away answers. Then a debrief: strengths and gaps marked on your diagram, an overall read, and what to practice. |
+| `brainstorm-on-board` | A thinking partner | Frames the question, gets your ideas out first, and adds a few of its own in pink. Then groups them, helps you compare and choose, and turns the choice into next steps. |
+
+Just say what you want ("Let's learn Kafka", "Give me a system design interview", "Help me brainstorm launch ideas"). Claude loads the matching playbook through `read_me`. To start one on purpose, use the connector's prompts: `/learn-on-board`, `/interview-on-board`, and `/brainstorm-on-board` in Claude Code, or the connector's prompt menu in the Claude app. Each takes an optional topic.
 
 ## Visual language
 
@@ -168,7 +180,7 @@ The board can also replay itself as a hand-drawn animation, using [excalidraw-an
 
 ## Why a connector and not a skill
 
-Everything Claude needs lives in the connector: its instructions, tool descriptions, and `read_me` guides. They reach every Claude client that uses the connector, including voice mode, which doesn't document support for skills. A skill would also only help with prose, and the hard parts here are geometry: layout, arrow routing, label placement, and checking the result. Those are in code.
+Everything Claude needs lives in the connector: its instructions, tool descriptions, `read_me` guides, and session playbooks. They reach every Claude client that uses the connector, including voice mode, which doesn't document support for skills, and there's nothing extra to install. The playbooks work like skills: the connector's instructions name them in one line, and Claude loads the full text only when a session calls for it. The hard parts of drawing (layout, arrow routing, label placement, and checking the result) are in code.
 
 Sources the visual language and patterns draw on:
 - [Tony Buzan's mind mapping rules](https://mindmapsunleashed.com/how-to-mind-map-with-tony-buzan): a central topic, a color per branch, curved branches, one keyword per branch, thicker branches near the center.
@@ -200,7 +212,7 @@ To try changes without touching your real board, run a second server and UI: `PO
 | `server/index.ts` | HTTP server: MCP endpoint, board API, WebSocket, access rules |
 | `server/tools.ts` | The connector's tools |
 | `server/describe.ts` | Board outline and change detection that Claude reads |
-| `server/guide.ts` | Instructions and `read_me` guides for Claude (element format adapted from [excalidraw/excalidraw-mcp](https://github.com/excalidraw/excalidraw-mcp), MIT) |
+| `server/guide.ts` | Instructions, `read_me` guides, and session playbooks for Claude (element format adapted from [excalidraw/excalidraw-mcp](https://github.com/excalidraw/excalidraw-mcp), MIT) |
 | `server/board.ts` | Forwards commands to the open tab; saves the board file |
 | `web/src/commands.ts` | Runs Claude's commands on the live Excalidraw board: drawing, arranging, moving the view |
 | `web/src/diagram.ts` | `draw_diagram`: merges calls, steps, and turns a layout into elements |

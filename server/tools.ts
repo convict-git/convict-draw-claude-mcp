@@ -15,7 +15,7 @@ import type {
 } from "../shared/protocol.js";
 import { Board, BoardNotOpenError, log } from "./board.js";
 import { describeBoard, describeChanges } from "./describe.js";
-import { GUIDE_TOPICS, GUIDES, SERVER_INSTRUCTIONS } from "./guide.js";
+import { GUIDE_TOPICS, GUIDES, PLAYBOOK_INFO, PLAYBOOKS, SERVER_INSTRUCTIONS } from "./guide.js";
 
 // Style vocabulary shared by the draw_diagram schema.
 const COLOR = z.enum(["blue", "green", "yellow", "orange", "red", "purple", "teal", "pink", "gray"]);
@@ -59,12 +59,28 @@ export function createMcpServer(board: Board, boardUrl: string): McpServer {
     {
       title: "Whiteboard guide",
       description:
-        "Returns a guide. Topic draw (default): the element format, arrangement operations, and sizing rules for the draw tool; read it once before your first draw call. styles: every visual property (colors, fills, strokes, opacity, arrowheads, fonts, frames, layers) and what to use it for. patterns: how to picture common explanations (mind maps, concept maps, timelines, comparisons, matrices, stacks, before/after). draw_diagram, point_at, and animate need no guide.",
+        "Returns a guide. Topic draw (default): the element format, arrangement operations, and sizing rules for the draw tool; read it once before your first draw call. styles: every visual property (colors, fills, strokes, opacity, arrowheads, fonts, frames, layers) and what to use it for. patterns: how to picture common explanations (mind maps, concept maps, timelines, comparisons, matrices, stacks, before/after). draw_diagram, point_at, and animate need no guide. Session playbooks, read at the start of a session and followed throughout: learn-on-board (tutoring a topic), interview-on-board (mock interviews where the user draws), brainstorm-on-board (generating, grouping, and choosing ideas).",
       inputSchema: { topic: z.enum(GUIDE_TOPICS).optional() },
       annotations: { readOnlyHint: true },
     },
     async ({ topic }) => textResult(`${GUIDES[topic ?? "draw"]}\n(read_me topics: ${GUIDE_TOPICS.join(", ")}. You don't need to read a topic twice in a conversation.)`),
   );
+
+  // The same playbooks as prompts, so a user can start a session on purpose (e.g. /learn-on-board in Claude Code).
+  for (const name of PLAYBOOKS) {
+    const info = PLAYBOOK_INFO[name];
+    server.registerPrompt(name, { title: info.title, description: info.description, argsSchema: { topic: z.string().optional().describe(info.argument) } }, ({ topic }) => ({
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `Let's start a whiteboard session. Follow this playbook for the rest of the conversation.\n\n${GUIDES[name]}\n${topic ? `Topic: ${topic}` : "Ask me what I'd like to work on."}`,
+          },
+        },
+      ],
+    }));
+  }
 
   server.registerTool(
     "get_board",
